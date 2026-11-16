@@ -82,7 +82,10 @@ click cannot be driven from a script. Test interaction in a headless shell:
 
 ```sh
 # isolated gnome-shell + extension, screenshot via screencast
-/tmp/islanddev/run.sh 6 panel battery     # mode: panel|compact|peek|alert
+tools/run-headless.sh 6 panel battery   # mode: panel|compact|alert|notify
+FAKE_PLAYER=1 tools/run-headless.sh 6 panel music   # player left, calendar right
+ISLAND_CLIPS=/tmp/clips.json ISLAND_SETTINGS=/tmp/settings.json \
+  tools/run-headless.sh 6 panel clips
 ```
 
 The harness copies the extension into its own XDG roots, so its settings

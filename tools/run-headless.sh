@@ -16,12 +16,23 @@ MODE=${2:-panel}
 TAB=${3:-}
 UUID=island@nexa.local
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-RUN="$ROOT/.test"
+RUN="${ISLAND_RUN:-$ROOT/.test}"
 EXT="$RUN/data/gnome-shell/extensions/$UUID"
 
 rm -rf "$RUN/data" "$RUN/config" "$RUN/cache" "$RUN/out"
 mkdir -p "$EXT" "$RUN/config" "$RUN/cache" "$RUN/out"
 cp "$ROOT/impl.js" "$ROOT/extension.js" "$ROOT/stylesheet.css" "$ROOT/metadata.json" "$EXT/"
+
+# Optional fixture files: point these at JSON files to render real clipboard
+# cards or non-default settings without touching the user's own config.
+if [ -n "${ISLAND_CLIPS:-}" ]; then
+  mkdir -p "$RUN/data/island-gnome"
+  cp "$ISLAND_CLIPS" "$RUN/data/island-gnome/clipboard.json"
+fi
+if [ -n "${ISLAND_SETTINGS:-}" ]; then
+  mkdir -p "$RUN/config/island-gnome"
+  cp "$ISLAND_SETTINGS" "$RUN/config/island-gnome/settings.json"
+fi
 
 python3 - "$EXT/impl.js" "$MODE" "$TAB" <<'PY'
 import sys
@@ -33,7 +44,25 @@ if anchor not in src:
     sys.exit("anchor not found in impl.js - update tools/run-headless.sh")
 
 body = ""
-if mode == "notify":
+if mode == "notify2":
+    rows = "\n".join(
+        "                this._onNotification({title: 'Notice %d', "
+        "body: 'Body text for notification number %d to give the row some height', source: {title: 'OpenBot'}});\n" % (i, i)
+        for i in range(1, 6))
+    dele = ("\n                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3800, () => {\n"
+            "                    this._dismissNotification(this._feed[0]);\n"
+            "                    this._dismissNotification(this._feed[1]);\n"
+            "                    return GLib.SOURCE_REMOVE;\n"
+            "                });\n") if os.environ.get("NOTIFY_DEL") else ""
+    body = (
+        "            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {\n"
+        + rows + dele +
+        "                this._setMode('panel');\n"
+        "                this._selectTab('notifications');\n"
+        "                return GLib.SOURCE_REMOVE;\n"
+        "            });\n"
+    )
+elif mode == "notify":
     body = (
         "            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {\n"
         "                this._onNotification({title: 'Build finished', "
@@ -64,6 +93,12 @@ export XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}
 gsettings set org.gnome.shell enabled-extensions "['$UUID']" 2>/dev/null || true
 gsettings set org.gnome.shell disabled-extensions "[]" 2>/dev/null || true
 gsettings set org.gnome.shell disable-user-extensions false 2>/dev/null || true
+if [ "\${FAKE_PLAYER:-0}" = "1" ]; then
+  python3 $ROOT/tools/fake-player.py > $RUN/player.log 2>&1 &
+  FP=\$!
+else
+  FP=
+fi
 gnome-shell --headless --wayland --no-x11 --virtual-monitor 1280x800 > $RUN/shell.log 2>&1 &
 SH=\$!
 sleep 8
@@ -75,6 +110,7 @@ python3 $ROOT/tools/screencast.py $SECS $RUN/out/cap > $RUN/cast.txt 2>&1 || tru
 sleep 2
 kill \$SH 2>/dev/null || true
 wait \$SH 2>/dev/null || true
+[ -n "\${FP:-}" ] && kill \$FP 2>/dev/null || true
 EOS
 
 dbus-run-session -- bash "$RUN/inner.sh" || true
