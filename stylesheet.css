@@ -1,0 +1,856 @@
+/* Dynamic Island for GNOME Shell.
+ *
+ * One visual system: pure black surface, one 12px type ramp, one radius
+ * scale (8 / 12 / 18 / 26). Everything inside the island sits on
+ * translucent white at three strengths so the black stays black.
+ */
+
+/* ---------- capsule ---------- */
+
+.island {
+    background-color: #000000;
+    color: #f5f5f7;
+    border: none;
+}
+
+.island-compact {
+    border-radius: 14px;
+}
+
+.island-peek {
+    border-radius: 18px;
+}
+
+.island-panel {
+    border-radius: 26px;
+}
+
+.island-alert {
+    border-radius: 22px;
+}
+
+/* ---------- compact ---------- */
+
+.island-compact-body {
+    padding: 0 14px;
+}
+
+.island-compact-row {
+    spacing: 9px;
+}
+
+.island-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 4px;
+    background-color: #6ea8ff;
+}
+
+.island-clock-small {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #f4f4f7;
+}
+
+.island-mini {
+    font-size: 12px;
+    color: rgba(236, 236, 245, 0.62);
+    padding: 0 2px;
+}
+
+.island-badge {
+    background-color: #6ea8ff;
+    color: #06070a;
+    font-size: 9.5px;
+    font-weight: 700;
+    border-radius: 9px;
+    padding: 1px 5px;
+    min-width: 8px;
+}
+
+.island-mini-art {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.island-mini-art-icon {
+    color: rgba(236, 236, 245, 0.7);
+}
+
+.island-charge-chip {
+    spacing: 4px;
+}
+
+.island-charge-icon {
+    color: #8ee6a1;
+}
+
+.island-charge-text {
+    font-size: 11.5px;
+    color: #cfe9d5;
+}
+
+.island-eq {
+    height: 16px;
+    spacing: 2px;
+    padding: 0 2px;
+}
+
+.island-eq-bar {
+    width: 3px;
+    border-radius: 2px;
+    background-color: #6ea8ff;
+}
+
+/* ---------- peek ---------- */
+
+.island-peek-body {
+    padding: 0 20px;
+}
+
+.island-peek-row {
+    spacing: 12px;
+}
+
+.island-peek-left {
+    spacing: 0;
+}
+
+.island-peek-right {
+    spacing: 1px;
+}
+
+.island-clock-big {
+    font-size: 21px;
+    font-weight: 600;
+    color: #f4f4f7;
+}
+
+.island-sub {
+    font-size: 11px;
+    color: rgba(236, 236, 245, 0.5);
+}
+
+.island-weather-line {
+    font-size: 12.5px;
+    color: rgba(236, 236, 245, 0.86);
+}
+
+/* ---------- panel ---------- */
+
+.island-panel-body {
+    background-color: #000000;
+    border-radius: 26px;
+}
+
+.island-panel-root {
+    padding: 20px 22px 18px 22px;
+    spacing: 14px;
+}
+
+.island-header {
+    spacing: 10px;
+}
+
+.island-clock-panel {
+    font-size: 34px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.island-header .island-sub {
+    font-size: 12px;
+    color: rgba(235, 235, 245, 0.45);
+}
+
+/* Segmented control: one recessed track, one raised active segment. */
+
+.island-tabs {
+    spacing: 2px;
+    padding: 3px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.island-tab {
+    padding: 5px 11px;
+    border-radius: 9px;
+    background-color: transparent;
+}
+
+.island-tab:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.island-tab-active {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.island-tab-active .island-tab-label {
+    color: #ffffff;
+}
+
+.island-tab-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(235, 235, 245, 0.55);
+}
+
+.island-panel-body-area {
+    padding: 0;
+}
+
+.island-view {
+    spacing: 10px;
+}
+.island-scroll {
+    padding: 0;
+}
+
+.island-empty {
+    font-size: 12.5px;
+    color: rgba(236, 236, 245, 0.35);
+    padding: 8px 2px;
+}
+
+/* ---------- notifications ---------- */
+
+.island-notif-list {
+    spacing: 8px;
+}
+
+.island-notif {
+    spacing: 11px;
+    padding: 9px 11px;
+    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.055);
+}
+
+.island-notif:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.island-notif:active {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.island-notif-text {
+    spacing: 2px;
+}
+
+.island-notif-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #f2f3f7;
+}
+
+.island-notif-body {
+    font-size: 11.5px;
+    color: rgba(236, 236, 245, 0.55);
+}
+
+.island-notif-time {
+    font-size: 10.5px;
+    color: rgba(236, 236, 245, 0.35);
+}
+
+/* ---------- meters ---------- */
+
+.island-meter {
+    spacing: 8px;
+}
+
+.island-meter-label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: rgba(235, 235, 245, 0.7);
+}
+
+.island-meter-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(245, 245, 247, 0.95);
+}
+
+.island-track {
+    height: 6px;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* A one-stop sheen over the accent colour: the bar keeps the picked accent
+ * but reads as a lit capsule rather than a flat rectangle. */
+.island-fill {
+    height: 6px;
+    border-radius: 3px;
+    background-color: #6ea8ff;
+    background-image: linear-gradient(90deg,
+        rgba(255, 255, 255, 0.02),
+        rgba(255, 255, 255, 0.28));
+}
+
+/* ---------- weather ---------- */
+
+.island-weather-head {
+    font-size: 22px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.island-hourly {
+    spacing: 6px;
+    padding: 2px 0;
+}
+
+.island-hour {
+    spacing: 2px;
+    padding: 7px 9px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.055);
+}
+
+.island-hour-time {
+    font-size: 10px;
+    color: rgba(236, 236, 245, 0.45);
+}
+
+.island-hour-glyph {
+    font-size: 15px;
+    color: #f4f4f7;
+}
+
+.island-hour-temp {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #f4f4f7;
+}
+
+.island-hour-rain {
+    font-size: 10px;
+    color: rgba(110, 168, 255, 0.9);
+}
+
+.island-daily {
+    spacing: 3px;
+}
+
+.island-day {
+    spacing: 8px;
+    padding: 5px 2px;
+}
+
+.island-day-name {
+    font-size: 12.5px;
+    color: rgba(236, 236, 245, 0.62);
+}
+
+.island-day-temp {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: #f4f4f7;
+}
+
+.island-day-rain {
+    font-size: 11px;
+    color: rgba(110, 168, 255, 0.85);
+}
+
+/* ---------- alert ---------- */
+
+.island-alert-body {
+    padding: 0 16px;
+}
+
+.island-alert-row {
+    spacing: 11px;
+}
+
+.island-alert-text {
+    spacing: 1px;
+}
+
+.island-alert-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f4f4f7;
+}
+
+.island-alert-body-text {
+    font-size: 11.5px;
+    color: rgba(236, 236, 245, 0.6);
+}
+
+.island-date-compact {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: rgba(236, 236, 245, 0.62);
+}
+
+/* ---------- music ---------- */
+
+.island-music {
+    spacing: 14px;
+    padding: 2px 0 0 0;
+}
+
+.island-music-head {
+    spacing: 15px;
+    x_expand: true;
+}
+
+.island-art {
+    width: 88px;
+    height: 88px;
+    border-radius: 18px;
+    background-color: rgba(255, 255, 255, 0.07);
+    border: none;
+}
+
+.island-art-icon {
+    color: rgba(236, 236, 245, 0.35);
+}
+
+.island-music-text {
+    spacing: 3px;
+}
+
+.island-music-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.island-music-artist {
+    font-size: 12.5px;
+    color: rgba(235, 235, 245, 0.55);
+}
+
+.island-music-speaker {
+    color: rgba(245, 245, 247, 0.55);
+}
+
+.island-music-prog {
+    spacing: 10px;
+    margin-top: 2px;
+}
+
+.island-music-time {
+    font-size: 10.5px;
+    color: rgba(235, 235, 245, 0.45);
+    min-width: 30px;
+}
+
+.island-music-seek {
+    height: 16px;
+}
+
+.island-music-track {
+    height: 3px;
+    border-radius: 2px;
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.island-music-fill {
+    height: 3px;
+    border-radius: 2px;
+    background-color: #ffffff;
+}
+
+.island-controls {
+    spacing: 34px;
+    padding: 2px 0 0 0;
+}
+
+.island-ctl {
+    background-color: transparent;
+    border-radius: 20px;
+}
+
+.island-ctl-plain {
+    width: 36px;
+    height: 36px;
+}
+
+.island-ctl-play {
+    width: 44px;
+    height: 44px;
+}
+
+.island-ctl-plain:hover,
+.island-ctl-play:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.island-ctl-icon {
+    color: #ffffff;
+}
+
+/* ---------- timer ---------- */
+
+.island-timer-big {
+    font-size: 54px;
+    font-weight: 300;
+    color: #ffffff;
+}
+
+.island-timer-track {
+    height: 4px;
+}
+
+.island-timer-actions {
+    spacing: 10px;
+    padding: 4px 0 0 0;
+}
+
+.island-pill-btn {
+    padding: 7px 18px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.island-pill-btn:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.island-pill-primary {
+    background-color: #6ea8ff;
+}
+
+.island-pill-primary:hover {
+    background-color: #85b7ff;
+}
+
+.island-pill-primary .island-pill-label {
+    color: #06070a;
+    font-weight: 600;
+}
+
+.island-pill-label {
+    font-size: 12.5px;
+    color: #eef1f8;
+}
+
+/* ---------- chips ---------- */
+
+.island-presets {
+    spacing: 6px;
+}
+
+.island-chip {
+    padding: 5px 12px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.island-chip:hover {
+    background-color: rgba(255, 255, 255, 0.11);
+}
+
+.island-chip-active {
+    background-color: rgba(110, 168, 255, 0.20);
+}
+
+.island-chip-active .island-chip-label {
+    color: #a8caff;
+    font-weight: 600;
+}
+
+.island-chip-label {
+    font-size: 11.5px;
+    color: rgba(236, 236, 245, 0.75);
+}
+
+/* ---------- settings ---------- */
+
+.island-settings {
+    spacing: 5px;
+}
+
+.island-settings-cols {
+    spacing: 8px;
+}
+
+.island-setting {
+    spacing: 10px;
+    padding: 7px 12px;
+    border-radius: 13px;
+    background-color: rgba(255, 255, 255, 0.045);
+}
+
+.island-setting-title {
+    font-size: 12.5px;
+    color: #eef1f8;
+}
+
+.island-setting-sub {
+    font-size: 10.5px;
+    color: rgba(236, 236, 245, 0.40);
+}
+
+.island-switch {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.island-switch-on {
+    background-color: #6ea8ff;
+}
+
+.island-knob {
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    background-color: #ffffff;
+}
+
+.island-swatches {
+    spacing: 7px;
+}
+
+.island-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+}
+
+.island-swatch-active {
+    border-color: rgba(255, 255, 255, 0.85);
+}
+
+.swatch-blue {
+    background-color: #6ea8ff;
+}
+
+.swatch-violet {
+    background-color: #a78bfa;
+}
+
+.swatch-green {
+    background-color: #4ade80;
+}
+
+.swatch-amber {
+    background-color: #fbbf24;
+}
+
+/* ---------- accent variants ---------- */
+
+.accent-violet .island-dot,
+.accent-violet .island-badge,
+.accent-violet .island-fill,
+.accent-violet .island-ctl-primary,
+.accent-violet .island-pill-primary,
+.accent-violet .island-switch-on {
+    background-color: #a78bfa;
+}
+
+.accent-violet .island-tab-active .island-tab-label,
+.accent-violet .island-chip-active .island-chip-label {
+    color: #c4b1ff;
+}
+
+.accent-violet .island-chip-active {
+    background-color: rgba(167, 139, 250, 0.20);
+}
+
+.accent-green .island-dot,
+.accent-green .island-badge,
+.accent-green .island-fill,
+.accent-green .island-ctl-primary,
+.accent-green .island-pill-primary,
+.accent-green .island-switch-on {
+    background-color: #4ade80;
+}
+
+.accent-green .island-tab-active .island-tab-label,
+.accent-green .island-chip-active .island-chip-label {
+    color: #93efb5;
+}
+
+.accent-green .island-chip-active {
+    background-color: rgba(74, 222, 128, 0.18);
+}
+
+.accent-amber .island-dot,
+.accent-amber .island-badge,
+.accent-amber .island-fill,
+.accent-amber .island-ctl-primary,
+.accent-amber .island-pill-primary,
+.accent-amber .island-switch-on {
+    background-color: #fbbf24;
+}
+
+.accent-amber .island-tab-active .island-tab-label,
+.accent-amber .island-chip-active .island-chip-label {
+    color: #ffd979;
+}
+
+.accent-amber .island-chip-active {
+    background-color: rgba(251, 191, 36, 0.18);
+}
+
+/* ---------- shared bar (toolbar rows) ---------- */
+
+.island-bar {
+    spacing: 8px;
+    padding: 2px 4px 6px 4px;
+}
+
+.island-bar-caption {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(236, 236, 245, 0.45);
+}
+
+.island-mini-btn {
+    padding: 4px 10px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.06);
+    transition-duration: 150ms;
+}
+
+.island-mini-btn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.island-mini-btn:active {
+    background-color: rgba(255, 255, 255, 0.17);
+}
+
+.island-mini-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: rgba(236, 236, 245, 0.75);
+}
+
+/* icon-only buttons: notification delete, clip actions */
+.island-row-btn,
+.island-clip-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    background-color: transparent;
+    transition-duration: 150ms;
+}
+
+.island-row-btn:hover,
+.island-clip-btn:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+}
+
+.island-row-btn:active,
+.island-clip-btn:active {
+    background-color: rgba(255, 255, 255, 0.16);
+}
+
+.island-row-btn-icon,
+.island-clip-btn-icon {
+    color: rgba(236, 236, 245, 0.5);
+}
+
+.island-row-btn:hover .island-row-btn-icon,
+.island-clip-btn:hover .island-clip-btn-icon {
+    color: #f2f3f7;
+}
+
+/* ---------- composed empty state ---------- */
+
+.island-empty-icon {
+    color: rgba(236, 236, 245, 0.3);
+    margin-bottom: 10px;
+}
+
+.island-empty-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(236, 236, 245, 0.75);
+    margin-bottom: 4px;
+}
+
+.island-empty-sub {
+    font-size: 11.5px;
+    color: rgba(236, 236, 245, 0.38);
+}
+
+/* ---------- clips ---------- */
+
+.island-clip-list {
+    spacing: 8px;
+}
+
+.island-clip {
+    spacing: 4px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.055);
+}
+
+.island-clip:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+}
+
+.island-clip-flash {
+    background-color: rgba(48, 209, 88, 0.16);
+}
+
+.island-clip-text {
+    spacing: 2px;
+}
+
+.island-clip-main {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: #f2f3f7;
+}
+
+.island-clip-when {
+    font-size: 10.5px;
+    color: rgba(236, 236, 245, 0.35);
+}
+
+/* ---------- battery tab ---------- */
+
+.island-batt-grid {
+    spacing: 8px;
+}
+
+.island-batt-row {
+    spacing: 8px;
+}
+
+.island-batt-tile {
+    spacing: 3px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.055);
+}
+
+.island-batt-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f5f5f7;
+}
+
+.island-batt-label {
+    font-size: 10.5px;
+    color: rgba(236, 236, 245, 0.42);
+}
+
+/* Health is the one bar that must not use the accent: its colour is the
+ * reading. Declared after the accent rules so it wins at equal specificity. */
+.island-fill.island-health-good {
+    background-color: #30d158;
+}
+
+.island-fill.island-health-warn {
+    background-color: #ffd60a;
+}
+
+.island-fill.island-health-bad {
+    background-color: #ff453a;
+}
