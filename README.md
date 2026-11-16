@@ -118,7 +118,7 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 | Now playing | Track line in the expanded bar and Music tab |
 | Battery activity | Charging / low-battery live activities |
 | Device activity | Bluetooth connect activities |
-| Clipboard history | Keep copied text on disk |
+| Clipboard history | Keep copied text on disk (off until you turn it on) |
 | Accent | Blue, violet, green, amber |
 | Animation | Slow, normal, fast (scales every duration) |
 | Auto-close | 0.8 s, 0.4 s or off |
@@ -134,13 +134,16 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 | Weather | [Open-Meteo](https://open-meteo.com/), coordinates from `~/.config/dynamic-island/config.json` |
 | Music | MPRIS over the session bus |
 | Notifications | GNOME `MessageTray` (the stock banner is suppressed) |
-| Clipboard | `St.Clipboard` polled every 2 s |
+| Clipboard | `St.Clipboard`, polled every 2 s **only while history is on** |
 
 ## Privacy
 
-- Clipboard history is **on by default** and stores copied text in plain text
-  at `$XDG_DATA_HOME/island-gnome/clipboard.json` (30 entries, 2000 chars
-  each). Turn it off in Settings, or delete the file to erase it.
+- Clipboard history is **off by default**. Nothing is read from the selection
+  until you turn it on — the Clips tab shows an opt-in button, and the switch
+  is also in Settings. Once on, copied text is stored in plain text at
+  `$XDG_DATA_HOME/island-gnome/clipboard.json` (30 entries, 2000 chars each).
+  Turning it off stops polling immediately; delete the file to erase what is
+  already stored.
 - Weather sends only your configured latitude/longitude to Open-Meteo. No
   account, no key, no other telemetry.
 - Nothing leaves the machine otherwise; the extension has no analytics and no
@@ -149,9 +152,11 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 ## How it works
 
 ```
-extension.js   loader — the only file GNOME caches. Watches impl.js and
-               stylesheet.css and re-imports them with a cache-busting query,
-               so saving a file reloads the island without logout.
+extension.js   entry point. In the working folder it is a loader — the only
+               file GNOME caches — that watches impl.js and stylesheet.css and
+               re-imports them with a cache-busting query, so saving a file
+               reloads the island without logout. The release build replaces
+               it with a plain `import Island from './impl.js'`.
 impl.js        the island: Clutter/St UI, timers, DBus clients, live activities,
                notification takeover.
 stylesheet.css St theme: black surface, 12px type ramp, radii 8/12/18/26.
@@ -182,6 +187,28 @@ tools/run-headless.sh 6 panel battery   # mode: panel | compact | peek | alert
 `AGENTS.md` and `SKILL.md` describe the file map, data sources and the safe
 recipes for adding a tab, a setting, a metric or a live activity. Read them
 before changing structure.
+
+## Releasing to extensions.gnome.org
+
+The folder in `~/.local/share/gnome-shell/extensions` is the development build.
+Ship a release build instead:
+
+```sh
+tools/build-release.sh        # writes dist/island@nexa.local.zip
+```
+
+That zip has the five files EGO expects at the root and a plain `extension.js`
+with no hot-reload loader and no file monitors. Before every upload:
+
+1. Bump `version` in `metadata.json` (an upload must be a new integer).
+2. Keep `shell-version` to the releases actually tested.
+3. Check the zip: `unzip -l dist/island@nexa.local.zip`.
+
+Then sign in at <https://extensions.gnome.org/accounts/login/> with an email
+link and upload at <https://extensions.gnome.org/upload/>. Review is
+volunteer-run and takes weeks; approved versions are the only ones anyone can
+install from the site. Users who do not want to wait can install from the zip
+in this repo.
 
 ## Known limitations
 

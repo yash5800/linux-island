@@ -2,7 +2,10 @@
   "uuid": "island@nexa.local",
   "name": "Island",
   "description": "Dynamic Island for GNOME Shell: clock, weather, notifications, clipboard history, music, battery health and system meters in one black capsule.",
-  "shell-version": ["49", "50"],
+  "shell-version": [
+    "49",
+    "50"
+  ],
   "url": "https://github.com/yash5800/linux-island",
-  "version": 2
+  "version": 3
 }

@@ -89,7 +89,10 @@ const DEFAULT_SETTINGS = {
     liveBattery: true,
     liveDevices: true,
     batteryTab: true,
-    saveClips: true,
+    // Opt-in. Reading the clipboard is a privacy-sensitive act, so a fresh
+    // install never does it until the user turns history on (Clips tab or
+    // Settings). An existing settings.json keeps whatever it already has.
+    saveClips: false,
     accent: 'blue',
     speed: 'normal',
     collapseMs: 420,
@@ -220,6 +223,7 @@ class Island {
         this._feed = [];
         this._clips = [];
         this._lastClip = '';
+        this._clipWatchId = 0;
         this._unseen = 0;
         this._tab = 'notifications';
         this._timers = [];
@@ -1661,6 +1665,15 @@ class Island {
     _setSetting(key, value) {
         this._settings[key] = value;
         saveSettings(this._settings);
+        // Clipboard polling follows the switch immediately, so turning history
+        // off stops reading the selection in the same click.
+        if (key === 'saveClips') {
+            if (value)
+                this._startClipWatch();
+            else
+                this._stopClipWatch();
+            this._renderClips();
+        }
         this._applySettings();
         if (this._tab === 'settings')
             this._renderSettings();
@@ -2244,7 +2257,9 @@ class Island {
         this._clipBar.add_child(clear);
         view.add_child(this._clipBar);
 
-        // Composed empty state: glyph, heading line, helper caption.
+        // Composed empty state: glyph, heading line, helper caption. When
+        // history is off this is the opt-in screen instead, because a blank
+        // list with "nothing copied yet" would look broken rather than off.
         this._clipsEmpty = new St.BoxLayout({vertical: true,
             x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
             x_expand: true, y_expand: true});
@@ -2257,6 +2272,15 @@ class Island {
         const es = label('Text you copy lands here and stays on disk', 'island-empty-sub');
         es.x_align = Clutter.ActorAlign.CENTER;
         this._clipsEmpty.add_child(es);
+        this._clipEmptyTitle = et;
+        this._clipEmptySub = es;
+        const enable = new St.Button({style_class: 'island-mini-btn island-clip-enable',
+            reactive: true, can_focus: false, x_align: Clutter.ActorAlign.CENTER});
+        enable.set_child(new St.Label({text: 'Turn on history', style_class: 'island-mini-label'}));
+        enable.connect('clicked', () => this._setSetting('saveClips', true));
+        enable.visible = false;
+        this._clipsEmpty.add_child(enable);
+        this._clipEnableBtn = enable;
         view.add_child(this._clipsEmpty);
 
         this._clipList = new St.BoxLayout({vertical: true, style_class: 'island-clip-list', x_expand: true});
@@ -2281,8 +2305,16 @@ class Island {
         for (const c of this._clipList.get_children())
             c.destroy();
         const has = this._clips.length > 0;
+        const on = !!this._settings.saveClips;
         this._clipsEmpty.visible = !has;
         this._clipBar.visible = has;
+        if (this._clipEmptyTitle) {
+            this._clipEmptyTitle.text = on ? 'Nothing copied yet' : 'Clipboard history is off';
+            this._clipEmptySub.text = on
+                ? 'Text you copy lands here and stays on disk'
+                : 'Copied text is never read or stored until you turn it on';
+            this._clipEnableBtn.visible = !on;
+        }
         if (this._clipScroll) {
             this._clipScroll.visible = has;
             if (has) {
@@ -2360,7 +2392,13 @@ class Island {
         // St exposes no clipboard-changed signal, so the watcher polls the
         // selection the way the shell's own clipboard managers do. The timer
         // rides in this._timers, which destroy() drains.
-        this._addTimer(2000, () => {
+        //
+        // Nothing is polled unless history is on: an extension that reads the
+        // selection every two seconds with history switched off is exactly
+        // what a reviewer (rightly) rejects. Opting in starts the timer.
+        if (!this._settings.saveClips || this._clipWatchId)
+            return;
+        this._clipWatchId = this._addTimer(2000, () => {
             try {
                 St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD,
                     (clipboard, text) => this._onClipText(text));
@@ -2368,6 +2406,16 @@ class Island {
                 LOG('clipboard read failed', e.message);
             }
         });
+    }
+
+    _stopClipWatch() {
+        if (!this._clipWatchId)
+            return;
+        this._removeTimer(this._clipWatchId);
+        this._clipWatchId = 0;
+        // Forget the last seen value so re-enabling records the current
+        // selection instead of treating it as already handled.
+        this._lastClip = '';
     }
 
     _onClipText(text) {

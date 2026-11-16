@@ -777,6 +777,12 @@
     color: rgba(236, 236, 245, 0.38);
 }
 
+/* Opt-in button, only shown while clipboard history is off. */
+.island-clip-enable {
+    margin-top: 12px;
+    padding: 6px 14px;
+}
+
 /* ---------- clips ---------- */
 
 .island-clip-list {
