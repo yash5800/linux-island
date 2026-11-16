@@ -1,5 +1,9 @@
 # Island — a Dynamic Island for GNOME Shell
 
+<a href="https://extensions.gnome.org/extension/11796/island/"><img src="https://img.shields.io/badge/GNOME%20Extensions-11796-4a86cf?style=for-the-badge&logo=gnome&logoColor=white" alt="Get it on GNOME Extensions"></a>
+<a href="https://extensions.gnome.org/extension/11796/island/"><img src="https://raw.githubusercontent.com/andyholmes/gnome-shell-extensions-badge/master/get-it-on-ego.svg" height="36" alt="Get it on GNOME Extensions"></a>
+
+
 One black capsule at the top centre of your screen, where the clock used to
 be. Hover it and it peeks; click it and it becomes a small dashboard: alerts,
 now playing, system meters, battery health, a timer, weather, clipboard
