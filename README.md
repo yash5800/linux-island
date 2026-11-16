@@ -4,30 +4,32 @@
 <a href="https://extensions.gnome.org/extension/11796/island/"><img src="https://raw.githubusercontent.com/andyholmes/gnome-shell-extensions-badge/master/get-it-on-ego.svg" height="36" alt="Get it on GNOME Extensions"></a>
 
 
-One black capsule at the top centre of your screen, where the clock used to
-be. Hover it and it peeks; click it and it becomes a small dashboard: alerts,
-now playing, system meters, battery health, a timer, weather, clipboard
-history and settings. Transient events — charging, low battery, a Bluetooth
-device, a notification, a finished timer — slide in as live activities and go
-away on their own.
+One black notch at the top centre of your screen. Hover it and it opens into
+a wide, short card — media on the left, calendar on the right — with a slim
+icon dock for alerts, system meters, battery health, a timer, weather,
+clipboard history and settings. Transient events — charging, low battery, a
+Bluetooth device, a notification, a finished timer — slide in as live
+activities and go away on their own.
 
 No bundler, no daemon, no Electron. It is a single GNOME Shell extension.
 
-![Compact pill](docs/compact.png)
+![Compact notch](docs/compact.png)
+
+![Expanded notch](docs/notch.png)
 
 ## Features
 
 | Area | What you get |
 |---|---|
 | **Clock** | Time (12/24 h) and full date, replacing GNOME's clock button |
-| **Weather** | Current conditions, feels-like, humidity, wind, next 6 hours, 2-day forecast (Open-Meteo) |
+| **Weather** | Current conditions, temperature / precipitation / wind charts, °C / °F switch and 8-day forecast (Open-Meteo) |
 | **Alerts** | Mirrors system notifications, unread badge, click a row to run the notification's own action / raise its app, clear all |
-| **Music** | MPRIS now playing with album art, title/artist, elapsed and remaining time, clickable + draggable seek bar, prev/play-pause/next |
+| **Music** | MPRIS now playing with album art, title/album/artist, elapsed and remaining time, clickable + draggable seek bar, prev/play-pause/next |
 | **System** | Live CPU, memory, disk and network meters with a one-second sampler |
 | **Battery** | Charge and time to full/empty, health %, cycle count, power draw, full and design capacity, voltage, wear, vendor/model/chemistry |
 | **Timer** | 1 / 5 / 10 / 25 minute presets, start-pause-reset, finish alert |
 | **Clips** | Clipboard history (30 entries, persisted to disk), copy back, delete, clear all |
-| **Settings** | Module toggles, accent colour, animation speed, auto-close delay |
+| **Settings** | Module toggles, accent colour, animation speed, pixel-art styles, wallpaper image and blur, auto-close delay |
 
 ### Live activities
 
@@ -89,9 +91,9 @@ GNOME's clock button reappears on disable; nothing else is modified.
 
 ## Usage
 
-- **Hover** the pill → peek (clock, weather, now playing).
-- **Click** → open the panel. Click a tab to switch.
-- **Escape** or a click outside → close the panel.
+- **Hover** the notch → opens the wide card: player left, calendar right.
+- **Click** a dock icon → switch to alerts, system, battery, timer, weather, clips or settings.
+- **Escape** or a click outside → close the card.
 - Leave the pointer → collapses after the auto-close delay (Settings).
 - Click the album art or seek bar while music plays to scrub.
 
@@ -104,7 +106,7 @@ GNOME's clock button reappears on disable; nothing else is modified.
 | System | CPU / memory / disk / network |
 | Battery | Charge, health, cycles, capacity, power |
 | Timer | Presets and running countdown |
-| Weather | Current + hourly + 2-day |
+| Weather | Current conditions, three hourly charts, 8-day forecast |
 | Clips | Clipboard history |
 | Settings | Toggles, accent, speed, auto-close |
 
@@ -123,8 +125,12 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 | Battery activity | Charging / low-battery live activities |
 | Device activity | Bluetooth connect activities |
 | Clipboard history | Keep copied text on disk (off until you turn it on) |
+| Wallpaper background | Optional custom or desktop wallpaper inside the island (off by default) |
+| Wallpaper image | Choose a local image or use the desktop wallpaper |
+| Wallpaper blur | Off, low, medium or strong |
 | Accent | Blue, violet, green, amber |
 | Animation | Slow, normal, fast (scales every duration) |
+| Pixel art | Spark, anime, car or cyberpunk sprites |
 | Auto-close | 0.8 s, 0.4 s or off |
 
 ## Where the data comes from
@@ -185,8 +191,11 @@ A headless test shell is included for interaction that cannot be driven on
 Wayland:
 
 ```sh
-tools/run-headless.sh 6 panel battery   # mode: panel | compact | peek | alert
+tools/run-headless.sh 6 panel battery   # mode: panel | compact | alert | notify
 ```
+
+Set `FAKE_PLAYER=1` to register a test MPRIS player, and
+`ISLAND_CLIPS` / `ISLAND_SETTINGS` to point at JSON fixtures.
 
 `AGENTS.md` and `SKILL.md` describe the file map, data sources and the safe
 recipes for adding a tab, a setting, a metric or a live activity. Read them

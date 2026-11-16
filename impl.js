@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
@@ -13,55 +14,59 @@ import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 const LOG = (...a) => console.log('[island]', ...a);
 
 const MODES = {
-    // 28, not 32: the shell panel is 32 px tall and a full-height pill bled
-    // two pixels past it into whatever app sits underneath.
-    compact: {width: 300, height: 28, radius: 14, style: 'island-compact'},
-    peek: {width: 372, height: 56, radius: 18, style: 'island-peek'},
-    panel: {width: 560, height: 380, radius: 22, style: 'island-panel'},
+    // Notch, not pill: the compact capsule hangs from the screen edge and
+    // only its bottom corners are rounded. 30 px keeps it inside the 32 px
+    // shell panel so it cannot bleed into an app below.
+    compact: {width: 320, height: 30, radius: 16, style: 'island-compact'},
+    // The expanded face is a wide, short slab: media on the left, calendar
+    // (or the active tab) on the right, exactly like the reference notch.
+    panel: {width: 640, height: 236, radius: 36, style: 'island-panel'},
     alert: {width: 392, height: 82, radius: 20, style: 'island-alert'},
 };
 
 // The panel hugs its tab: a dashboard does not need the same vertical space
 // as the music player. Height animates on tab change, like the real thing.
 const PANEL_HEIGHTS = {
-    notifications: 366,
-    music: 366,
-    system: 300,
-    battery: 392,
-    timer: 312,
-    weather: 358,
-    clips: 372,
-    settings: 392,
+    notifications: 300,
+    music: 236,
+    system: 286,
+    battery: 330,
+    timer: 280,
+    weather: 390,
+    clips: 300,
+    settings: 360,
 };
 
 // An empty tab should not sit in a half-empty capsule: the panel height
 // follows what the tab actually has to show.
 const panelHeight = (tab, island) => {
     if (tab === 'music' && island && !island._activePlayer?.())
-        return 268;
+        return 236;
     if (tab === 'notifications' && island && island._feed?.length === 0)
-        return 300;
+        return 250;
     if (tab === 'clips' && island && island._clips?.length === 0)
-        return 300;
+        return 250;
     return PANEL_HEIGHTS[tab] ?? MODES.panel.height;
 };
 
-const DURATION = 220;
+const DURATION = 280;
 
-// Fixed footprint of the overlay, sized for the largest mode (panel).
-const FRAME = {width: 600, height: 400};
-// Distance from the top of the monitor to the capsule. The shell panel is
-// 32 px tall; a 1 px margin keeps the rounded corners visible.
+// Fixed footprint of the overlay, sized for the largest mode (panel). The
+// panel itself is clamped to 470 px tall; the frame has to be at least that
+// tall plus the top inset or a tall tab runs past its parent's allocation.
+const FRAME = {width: 720, height: 500};
+// Distance from the top of the monitor to the capsule. The notch modes sit
+// flush with the screen edge; only floating alerts use an inset.
 const CAP_TOP = 2;
 const TABS = [
-    {id: 'notifications', label: 'Alerts'},
-    {id: 'music', label: 'Music'},
-    {id: 'system', label: 'System'},
-    {id: 'battery', label: 'Battery'},
-    {id: 'timer', label: 'Timer'},
-    {id: 'weather', label: 'Weather'},
-    {id: 'clips', label: 'Clips'},
-    {id: 'settings', label: 'Settings'},
+    {id: 'notifications', label: 'Alerts', icon: 'preferences-system-notifications-symbolic'},
+    {id: 'music', label: 'Music', icon: 'audio-x-generic-symbolic'},
+    {id: 'system', label: 'System', icon: 'computer-symbolic'},
+    {id: 'battery', label: 'Battery', icon: 'battery-good-symbolic'},
+    {id: 'timer', label: 'Timer', icon: 'alarm-symbolic'},
+    {id: 'weather', label: 'Weather', icon: 'weather-clear-symbolic'},
+    {id: 'clips', label: 'Clips', icon: 'edit-copy-symbolic'},
+    {id: 'settings', label: 'Settings', icon: 'preferences-system-symbolic'},
 ];
 
 // get_user_config_dir(), not home + '.config': it honours XDG_CONFIG_HOME,
@@ -76,10 +81,16 @@ const CLIPS_FILE = GLib.build_filenamev([
 ]);
 const MAX_CLIPS = 30;
 const MAX_CLIP_CHARS = 2000;
-// Rows visible before the clip list scrolls; the rest stay one wheel away.
-const CLIP_VISIBLE = 4;
+// Clip cards size to their text; the list viewport stops growing at this
+// height and scrolls instead. Rows must never be cut by a fixed row height:
+// a wrapped clip is taller than one line, and a hard 46 px slot clipped it.
+const CLIP_VIEW_MAX = 200;
+// `.island-clip-list` spacing.
+const CLIP_GAP = 8;
+// Full-width tabs (clips never shares the slab with the player column):
+// 640 panel - 32 root padding - 20 card padding - 60 buttons - 12 gaps.
+const CLIP_TEXT_W = 514;
 const NET_FULL_RATE = 10e6;
-const CLIP_ROW_H = 46;
 
 const DEFAULT_SETTINGS = {
     clock24: false,
@@ -95,11 +106,44 @@ const DEFAULT_SETTINGS = {
     saveClips: false,
     accent: 'blue',
     speed: 'normal',
+    pixelStyle: 'spark',
+    wallpaperBackground: false,
+    wallpaperBlur: 12,
+    wallpaperUri: '',
     collapseMs: 420,
 };
 
 const SPEED = {slow: 0.65, normal: 1, fast: 1.55};
 const ACCENTS = ['blue', 'violet', 'green', 'amber'];
+
+// Each sprite is a small, hand-drawn 9x9 pixel animation. `.` is empty,
+// `x` is the theme color, and `#` is its bright highlight.
+const PIXEL_STYLES = {
+    spark: [
+        ['....#....', '.........', '..x...x..', '...x.x...', 'x...#...x', '...x.x...', '..x...x..', '.........', '....#....'],
+        ['...x#x...', '..x...x..', '.x.....x.', 'x..x.x..x', '#...x...#', 'x..x.x..x', '.x.....x.', '..x...x..', '...x#x...'],
+        ['.xx.#.xx.', 'x..x.x..x', 'x.......x', '.x.x.x.x.', '#...#...#', '.x.x.x.x.', 'x.......x', 'x..x.x..x', '.xx.#.xx.'],
+        ['.........', '....#....', '..x...x..', '.........', 'x...#...x', '.........', '..x...x..', '....#....', '.........'],
+    ],
+    anime: [
+        ['....###..', '..#######', '.########', '###...###', '##.#.#.##', '.#######.', '..##.##..', '..#####..', '.##...##.'],
+        ['....###..', '..#######', '.########', '###...###', '##.#.#.##', '.#######.', '..##.##..', '.#######.', '##.....##'],
+        ['...#####.', '..#######', '.########', '###...###', '##.#.#.##', '.#######.', '..##.##..', '..#####..', '.##...##.'],
+        ['....###..', '..#######', '.########', '###...###', '##.#.#.##', '.#######.', '..##.##..', '.#######.', '##.....##'],
+    ],
+    car: [
+        ['.........', '...xxxxx.', '..xxxxxxx', '.xx.###.x', 'xxxxxxxxx', 'xx.xxx.xx', '.##...##.', '.........', '.........'],
+        ['.........', '...xxxxx.', '..xxxxxxx', '.xx.###.#', 'xxxxxxxxx', 'xx.xxx.xx', '.##...##.', '.........', '.........'],
+        ['.........', '...xxxxx.', '..xxxxxxx', '.xx.###.x', 'xxxxxxxxx', 'xx.xxx.xx', '.##...##.', '..x....x.', '.........'],
+        ['.........', '...xxxxx.', '..xxxxxxx', '.xx.###.#', 'xxxxxxxxx', 'xx.xxx.xx', '.##...##.', '..x....x.', '.........'],
+    ],
+    cyberpunk: [
+        ['....#....', '...x#x...', '..x.#.x..', '.x..#..x.', 'xxxxxxxxx', '.x..#..x.', '..x.#.x..', '...x#x...', '....#....'],
+        ['....x....', '...x#x...', '..x.#.x..', '.x..#..x.', 'xx#xxx#xx', '.x..#..x.', '..x.#.x..', '...x#x...', '....x....'],
+        ['.........', '...x#x...', '..x.#.x..', '.x..#..x.', 'xxxxxxxxx', '.x..#..x.', '..x.#.x..', '...x#x...', '.........'],
+        ['....x....', '...x#x...', '..x.#.x..', '.x..#..x.', 'xx#xxx#xx', '.x..#..x.', '..x.#.x..', '...x#x...', '....x....'],
+    ],
+};
 
 function loadSettings() {
     try {
@@ -167,6 +211,23 @@ const WEATHER_GLYPH = {
     86: '🌨', 95: '⛈', 96: '⛈', 99: '⛈',
 };
 
+const WEATHER_ICON = {
+    0: 'weather-clear-symbolic', 1: 'weather-few-clouds-symbolic',
+    2: 'weather-few-clouds-symbolic', 3: 'weather-overcast-symbolic',
+    45: 'weather-fog-symbolic', 48: 'weather-fog-symbolic',
+    51: 'weather-showers-scattered-symbolic', 53: 'weather-showers-scattered-symbolic',
+    55: 'weather-showers-symbolic', 56: 'weather-showers-symbolic',
+    57: 'weather-showers-symbolic', 61: 'weather-showers-scattered-symbolic',
+    63: 'weather-showers-symbolic', 65: 'weather-showers-symbolic',
+    66: 'weather-showers-symbolic', 67: 'weather-showers-symbolic',
+    71: 'weather-snow-symbolic', 73: 'weather-snow-symbolic',
+    75: 'weather-snow-symbolic', 77: 'weather-snow-symbolic',
+    80: 'weather-showers-scattered-symbolic', 81: 'weather-showers-scattered-symbolic',
+    82: 'weather-storm-symbolic', 85: 'weather-snow-symbolic',
+    86: 'weather-snow-symbolic', 95: 'weather-storm-symbolic',
+    96: 'weather-storm-symbolic', 99: 'weather-storm-symbolic',
+};
+
 function readText(path) {
     try {
         const [ok, data] = GLib.file_get_contents(path);
@@ -224,11 +285,17 @@ class Island {
         this._clips = [];
         this._lastClip = '';
         this._clipWatchId = 0;
+        this._clipFitId = 0;
         this._unseen = 0;
-        this._tab = 'notifications';
+        // The first hover opens the reference face: player left, calendar
+        // right. Tabs stay where the user leaves them after they pick one.
+        this._tab = 'music';
         this._timers = [];
         this._stageSignals = [];
         this._weather = null;
+        this._weatherMetric = 'temperature';
+        this._weatherUnit = 'c';
+        this._weatherChartPoints = [];
         this._cpuPrev = null;
         this._netPrev = null;
         this._alertUntil = 0;
@@ -244,14 +311,18 @@ class Island {
         this._timerTickerId = 0;
         this._timerEndAt = 0;
         this._currentArtUrl = null;
-        this._musicPeekText = null;
+        this._wallpaperSettingsSignals = [];
+        this._wallpaperSettings = null;
+        this._wallpaperRenderUri = null;
+        this._wallpaperRenderKey = null;
+        this._wallpaperCurrentUri = null;
+        this._wallpaperDialog = null;
 
         this._session = new Soup.Session({timeout: 12});
         this._session.user_agent = 'island-gnome-extension/1.0';
 
         this._buildUI();
         this._buildCompact();
-        this._buildPeek();
         this._buildPanel();
         this._buildAlert();
 
@@ -260,7 +331,6 @@ class Island {
         this._startClipWatch();
 
         this._capsule.add_child(this._compact);
-        this._capsule.add_child(this._peek);
         this._capsule.add_child(this._panel);
         this._capsule.add_child(this._alert);
 
@@ -268,6 +338,10 @@ class Island {
         this._applySettings();
 
         this._capsule.connect('notify::hover', () => this._onHoverChanged());
+        // Child scroll views still receive the wheel first; stopping it on
+        // the capsule keeps the event out of the shell panel (workspace
+        // scroll) once the tab content has nothing left to scroll.
+        this._capsule.connect('scroll-event', () => Clutter.EVENT_STOP);
         // Only the collapsed capsule toggles the panel. Presses inside the
         // open panel reach this too (events bubble), and the old handler
         // treated every tab click as "close", so the panel vanished instead
@@ -379,13 +453,310 @@ class Island {
             width: MODES.compact.width,
             height: MODES.compact.height,
             x: Math.round((FRAME.width - MODES.compact.width) / 2),
-            y: CAP_TOP,
+            y: 0,
             opacity: 255,
         });
         this._capsule.add_style_class_name(MODES.compact.style);
 
+        this._wallpaper = new St.Widget({
+            style_class: 'island-wallpaper',
+            reactive: false,
+            clip_to_allocation: true,
+            x_align: Clutter.ActorAlign.FILL,
+            y_align: Clutter.ActorAlign.FILL,
+            x_expand: true,
+            y_expand: true,
+        });
+        this._wallpaperTint = new St.Widget({
+            style_class: 'island-wallpaper-tint',
+            reactive: false,
+            clip_to_allocation: true,
+            x_align: Clutter.ActorAlign.FILL,
+            y_align: Clutter.ActorAlign.FILL,
+            x_expand: true,
+            y_expand: true,
+        });
+        this._capsule.add_child(this._wallpaper);
+        this._capsule.add_child(this._wallpaperTint);
+        try {
+            this._wallpaperSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.background'});
+            for (const key of ['picture-uri', 'picture-uri-dark']) {
+                const id = this._wallpaperSettings.connect(`changed::${key}`, () => this._refreshWallpaper());
+                this._wallpaperSettingsSignals.push(id);
+            }
+        } catch (e) {
+            LOG('desktop wallpaper setting unavailable', e.message);
+        }
+        this._refreshWallpaper();
+
         this._frame.add_child(this._capsule);
         Main.uiGroup.add_child(this._frame);
+    }
+
+    _refreshWallpaper() {
+        if (!this._wallpaper || !this._capsule)
+            return;
+
+        let uri = null;
+        let wallpaperFile = null;
+        const candidates = [this._settings.wallpaperUri];
+        for (const key of ['picture-uri-dark', 'picture-uri']) {
+            try {
+                candidates.push(this._wallpaperSettings?.get_string(key));
+            } catch (e) {}
+        }
+        for (const candidate of candidates) {
+            try {
+                if (!candidate?.startsWith('file://'))
+                    continue;
+                const file = Gio.File.new_for_uri(candidate);
+                if (!file.query_exists(null))
+                    continue;
+                const info = file.query_info('standard::content-type', Gio.FileQueryInfoFlags.NONE, null);
+                if (info.get_content_type()?.startsWith('image/')) {
+                    uri = file.get_uri();
+                    wallpaperFile = file;
+                    break;
+                }
+            } catch (e) {}
+        }
+
+        const enabled = !!uri && !!this._settings.wallpaperBackground;
+        this._wallpaper.visible = enabled;
+        this._wallpaperTint.visible = enabled;
+        const blur = Math.max(0, Math.min(24, Number(this._settings.wallpaperBlur) || 0));
+        const renderKey = enabled && uri ? `${uri}:${blur}` : null;
+        if (renderKey !== this._wallpaperRenderKey) {
+            this._wallpaperRenderKey = renderKey;
+            this._wallpaperRenderUri = enabled && uri
+                ? this._prepareWallpaperImage(wallpaperFile, uri, blur)
+                : null;
+        }
+        const renderUri = enabled ? this._wallpaperRenderUri : null;
+        if (renderUri !== this._wallpaperCurrentUri) {
+            this._wallpaperCurrentUri = renderUri;
+            // GFile returns an encoded URI, so quotes and spaces in paths
+            // cannot escape the CSS url() value. The source is pre-scaled to
+            // the capsule's maximum size so animation frames do not resample
+            // a multi-megapixel desktop image.
+            this._wallpaper.style = renderUri
+                ? `background-image: url("${renderUri}"); background-size: cover; background-position: center; background-repeat: no-repeat;`
+                : '';
+        }
+        if (enabled)
+            this._capsule.add_style_class_name('island-wallpaper-on');
+        else
+            this._capsule.remove_style_class_name('island-wallpaper-on');
+    }
+
+    _prepareWallpaperImage(file, sourceUri, blurRadius) {
+        const sourcePath = file?.get_path?.();
+        if (!sourcePath)
+            return sourceUri;
+        try {
+            const info = file.query_info(
+                'time::modified,time::modified-usec,standard::size', Gio.FileQueryInfoFlags.NONE, null);
+            const stamp = `${info.get_attribute_uint64('time::modified')}:` +
+                `${info.get_attribute_uint32('time::modified-usec')}:${info.get_size()}`;
+            const digest = GLib.compute_checksum_for_string(
+                GLib.ChecksumType.SHA256, `${sourceUri}:${stamp}:blur-${blurRadius}:rounded-v1`, -1).slice(0, 20);
+            const cacheDir = GLib.build_filenamev([GLib.get_user_cache_dir(), 'island-gnome', 'wallpapers']);
+            const cachePath = GLib.build_filenamev([cacheDir, `${digest}.png`]);
+            if (!GLib.file_test(cachePath, GLib.FileTest.EXISTS)) {
+                GLib.mkdir_with_parents(cacheDir, 0o755);
+                const pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(sourcePath, 640, 470, true);
+                const radius = Math.round(blurRadius / 2);
+                const output = radius > 0 ? this._blurWallpaperPixbuf(pixbuf, radius) : pixbuf;
+                output.savev(cachePath, 'png', [], []);
+            }
+            return GLib.filename_to_uri(cachePath, null);
+        } catch (e) {
+            LOG('wallpaper downscale failed', e.message);
+            return sourceUri;
+        }
+    }
+
+    _blurWallpaperPixbuf(pixbuf, radius) {
+        const width = pixbuf.get_width();
+        const height = pixbuf.get_height();
+        const stride = pixbuf.get_rowstride();
+        const channels = pixbuf.get_n_channels();
+
+        const boxPass = (input, r, horizontal) => {
+            const output = new Uint8Array(input.length);
+            const lineLength = horizontal ? width : height;
+            const lineCount = horizontal ? height : width;
+            const diameter = r * 2 + 1;
+            const sums = new Float64Array(channels);
+            const offset = (line, position) => horizontal
+                ? line * stride + position * channels
+                : position * stride + line * channels;
+
+            for (let line = 0; line < lineCount; line++) {
+                sums.fill(0);
+                for (let i = -r; i <= r; i++) {
+                    const idx = offset(line, Math.max(0, Math.min(lineLength - 1, i)));
+                    for (let c = 0; c < channels; c++)
+                        sums[c] += input[idx + c];
+                }
+
+                for (let position = 0; position < lineLength; position++) {
+                    const idx = offset(line, position);
+                    for (let c = 0; c < channels; c++)
+                        output[idx + c] = Math.round(sums[c] / diameter);
+                    const leaving = offset(line, Math.max(0, position - r));
+                    const entering = offset(line, Math.min(lineLength - 1, position + r + 1));
+                    for (let c = 0; c < channels; c++)
+                        sums[c] += input[entering + c] - input[leaving + c];
+                }
+            }
+            return output;
+        };
+
+        let pixels = new Uint8Array(pixbuf.get_pixels());
+        for (let pass = 0; pass < 3; pass++) {
+            pixels = boxPass(pixels, radius, true);
+            pixels = boxPass(pixels, radius, false);
+        }
+        const bytes = GLib.Bytes.new(pixels);
+        return GdkPixbuf.Pixbuf.new_from_bytes(
+            bytes, pixbuf.get_colorspace(), pixbuf.get_has_alpha(),
+            pixbuf.get_bits_per_sample(), width, height, stride);
+    }
+
+    _closeWallpaperRequest(request) {
+        if (!request)
+            return;
+        if (request.responseSignalId) {
+            Gio.DBus.session.signal_unsubscribe(request.responseSignalId);
+            request.responseSignalId = 0;
+        }
+        if (!request.handle || request.closeSent)
+            return;
+        request.closeSent = true;
+        Gio.DBus.session.call(
+            'org.freedesktop.portal.Desktop', request.handle,
+            'org.freedesktop.portal.Request', 'Close', null, null,
+            Gio.DBusCallFlags.NONE, 1000, null,
+            (connection, result) => {
+                try {
+                    connection.call_finish(result);
+                } catch (e) {
+                    // The portal may already have closed the request.
+                }
+            });
+    }
+
+    _setWallpaper(uri, enabled) {
+        this._settings.wallpaperUri = uri;
+        this._settings.wallpaperBackground = enabled;
+        saveSettings(this._settings);
+        this._applySettings();
+        if (this._tab === 'settings')
+            this._renderSettings();
+    }
+
+    _chooseWallpaper() {
+        if (this._wallpaperDialog || this._destroyed)
+            return;
+
+        const connection = Gio.DBus.session;
+        const token = `island_wallpaper_${GLib.get_monotonic_time()}`;
+        const sender = (connection.get_unique_name() ?? '').replace(/^:/, '').replace(/\./g, '_');
+        const expectedHandle = `/org/freedesktop/portal/desktop/request/${sender}/${token}`;
+        const request = {handle: expectedHandle, expectedHandle, responseSignalId: 0,
+            closeSent: false, done: false};
+        this._wallpaperDialog = request;
+
+        try {
+            // Subscribe before OpenFile: a fast portal response can arrive
+            // before the method callback returns its handle.
+            request.responseSignalId = connection.signal_subscribe(
+                'org.freedesktop.portal.Desktop',
+                'org.freedesktop.portal.Request', 'Response', null,
+                null, Gio.DBusSignalFlags.NONE,
+                (conn, senderName, path, iface, signal, parameters) => {
+                    if (path !== request.expectedHandle && path !== request.handle)
+                        return;
+                    if (request.responseSignalId) {
+                        conn.signal_unsubscribe(request.responseSignalId);
+                        request.responseSignalId = 0;
+                    }
+                    request.done = true;
+                    request.handle = null; // Response closes the portal request.
+                    if (this._wallpaperDialog === request)
+                        this._wallpaperDialog = null;
+                    if (this._destroyed)
+                        return;
+
+                    try {
+                        const response = parameters.get_child_value(0).get_uint32();
+                        if (response !== 0)
+                            return; // The user dismissed the chooser.
+                        const values = parameters.get_child_value(1);
+                        const uris = values.lookup_value(
+                            'uris', new GLib.VariantType('as'))?.get_strv() ?? [];
+                        const uri = uris[0];
+                        if (!uri?.startsWith('file://')) {
+                            LOG('choose a local wallpaper image');
+                            return;
+                        }
+                        const file = Gio.File.new_for_uri(uri);
+                        const info = file.query_info(
+                            'standard::content-type', Gio.FileQueryInfoFlags.NONE, null);
+                        if (!info.get_content_type()?.startsWith('image/')) {
+                            LOG('wallpaper selection is not an image');
+                            return;
+                        }
+                        this._setWallpaper(uri, true);
+                    } catch (e) {
+                        LOG('wallpaper selection failed', e.message);
+                    }
+                });
+
+            connection.call(
+                'org.freedesktop.portal.Desktop',
+                '/org/freedesktop/portal/desktop',
+                'org.freedesktop.portal.FileChooser', 'OpenFile',
+                new GLib.Variant('(ssa{sv})', [
+                    '', 'Choose Island wallpaper',
+                    {handle_token: new GLib.Variant('s', token)},
+                ]),
+                new GLib.VariantType('(o)'),
+                Gio.DBusCallFlags.NONE, -1, null,
+                (bus, result) => {
+                    try {
+                        const [handle] = bus.call_finish(result).deep_unpack();
+                        if (request.done)
+                            return; // The response signal already handled this request.
+                        request.handle = handle;
+                        if (this._destroyed || this._wallpaperDialog !== request) {
+                            this._closeWallpaperRequest(request);
+                            return;
+                        }
+                    } catch (e) {
+                        request.done = true;
+                        request.handle = null;
+                        if (request.responseSignalId) {
+                            bus.signal_unsubscribe(request.responseSignalId);
+                            request.responseSignalId = 0;
+                        }
+                        if (this._wallpaperDialog === request)
+                            this._wallpaperDialog = null;
+                        if (!this._destroyed)
+                            LOG('wallpaper picker unavailable', e.message);
+                    }
+                });
+        } catch (e) {
+            request.done = true;
+            request.handle = null;
+            if (request.responseSignalId) {
+                connection.signal_unsubscribe(request.responseSignalId);
+                request.responseSignalId = 0;
+            }
+            this._wallpaperDialog = null;
+            LOG('wallpaper picker unavailable', e.message);
+        }
     }
 
     _shell() {
@@ -400,10 +771,30 @@ class Island {
         const box = this._shell();
         box.add_style_class_name('island-compact-body');
 
+        this._pixelStyle = null;
+        this._pixelFrames = [];
+        this._pixel = new St.BoxLayout({vertical: true, style_class: 'island-pixel',
+            y_align: Clutter.ActorAlign.CENTER});
+        this._pixelCells = [];
+        for (let r = 0; r < 9; r++) {
+            const rowBox = new St.BoxLayout({style_class: 'island-pixel-row'});
+            for (let c = 0; c < 9; c++) {
+                const cell = new St.Widget({style_class: 'island-pixel-cell'});
+                rowBox.add_child(cell);
+                this._pixelCells.push(cell);
+            }
+            this._pixel.add_child(rowBox);
+        }
+        this._pixelFrame = 0;
+        this._setPixelStyle(this._settings.pixelStyle, false);
+        this._paintPixelFrame(0);
+
         const row = new St.BoxLayout({style_class: 'island-compact-row'});
         this._dot = new St.Widget({style_class: 'island-dot', y_align: Clutter.ActorAlign.CENTER});
         this._dateCompact = label('', 'island-date-compact');
+        this._sepCompact = label('·', 'island-sep-compact');
         this._clockCompact = label('--:--', 'island-clock-small');
+        this._clockCompact.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._tempCompact = label('', 'island-mini');
         this._chargeChip = new St.BoxLayout({
             style_class: 'island-charge-chip',
@@ -411,13 +802,13 @@ class Island {
         });
         this._chargeIcon = new St.Icon({
             icon_name: 'battery-charging-symbolic',
-            icon_size: 14,
+            icon_size: 15,
             style_class: 'island-charge-icon',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._chargeText = label('', 'island-charge-text');
-        this._chargeChip.add_child(this._chargeIcon);
         this._chargeChip.add_child(this._chargeText);
+        this._chargeChip.add_child(this._chargeIcon);
         this._chargeChip.hide();
         this._badge = new St.Label({text: '', style_class: 'island-badge', y_align: Clutter.ActorAlign.CENTER});
         this._badge.hide();
@@ -445,9 +836,11 @@ class Island {
         }
         this._eq.hide();
 
+        row.add_child(this._pixel);
         row.add_child(this._dot);
         row.add_child(this._compactArt);
         row.add_child(this._dateCompact);
+        row.add_child(this._sepCompact);
         row.add_child(this._clockCompact);
         row.add_child(new St.Widget({x_expand: true}));
         row.add_child(this._eq);
@@ -456,92 +849,44 @@ class Island {
         row.add_child(this._badge);
         box.add_child(row);
         this._compact = box;
-    }
-
-    _buildPeek() {
-        const box = this._shell();
-        box.add_style_class_name('island-peek-body');
-
-        const row = new St.BoxLayout({style_class: 'island-peek-row'});
-
-        const left = new St.BoxLayout({vertical: true, style_class: 'island-peek-left'});
-        this._clockPeek = label('--:--', 'island-clock-big');
-        this._datePeek = label('', 'island-sub');
-        left.add_child(this._clockPeek);
-        left.add_child(this._datePeek);
-
-        const right = new St.BoxLayout({vertical: true, style_class: 'island-peek-right', x_align: Clutter.ActorAlign.END});
-        this._weatherPeek = label('', 'island-weather-line');
-        this._weatherPeek.width = 224;
-        this._weatherPeek.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._systemPeek = label('', 'island-sub');
-        this._systemPeek.width = 224;
-        this._systemPeek.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        right.add_child(this._weatherPeek);
-        right.add_child(this._systemPeek);
-
-        row.add_child(left);
-        row.add_child(new St.Widget({x_expand: true}));
-        row.add_child(right);
-        box.add_child(row);
-        this._peek = box;
+        this._startPixelAnim();
     }
 
     _buildPanel() {
         const box = this._shell();
         box.add_style_class_name('island-panel-body');
 
+        // The expanded face is one wide slab, not a tall dashboard: a player
+        // on the left and the active face on the right, the two halves of the
+        // reference notch. The tab dock is a slim row along the bottom edge.
         const root = new St.BoxLayout({
             vertical: true,
             style_class: 'island-panel-root',
         });
 
-        // header
-        const header = new St.BoxLayout({style_class: 'island-header'});
-        const hLeft = new St.BoxLayout({vertical: true});
-        this._clockPanel = label('--:--', 'island-clock-panel');
-        this._datePanel = label('', 'island-sub');
-        hLeft.add_child(this._clockPanel);
-        hLeft.add_child(this._datePanel);
-        header.add_child(hLeft);
-        header.add_child(new St.Widget({x_expand: true}));
-        const hRight = new St.BoxLayout({vertical: true, x_align: Clutter.ActorAlign.END});
-        this._weatherPanel = label('', 'island-weather-line');
-        this._batteryPanel = label('', 'island-sub');
-        hRight.add_child(this._weatherPanel);
-        hRight.add_child(this._batteryPanel);
-        header.add_child(hRight);
-        root.add_child(header);
-
-        // tabs
-        const tabs = new St.BoxLayout({style_class: 'island-tabs'});
-        this._tabButtons = {};
-        for (const t of TABS) {
-            const b = new St.Button({style_class: 'island-tab', reactive: true, can_focus: false});
-            b.set_child(new St.Label({text: t.label, style_class: 'island-tab-label'}));
-            b.connect('clicked', () => this._selectTab(t.id));
-            this._tabButtons[t.id] = b;
-            tabs.add_child(b);
-        }
-        root.add_child(tabs);
-
-        // body stack
-        this._body = new St.BoxLayout({
-            style_class: 'island-panel-body-area',
-            vertical: true,
-            x_expand: true,
-        });
-        // Scrolls when a tab is taller than the panel (Settings, long
-        // notification lists) instead of being clipped at the bottom edge.
-        this._scroll = new St.ScrollView({
-            style_class: 'island-scroll',
+        const split = new St.BoxLayout({
+            style_class: 'island-panel-split',
             x_expand: true,
             y_expand: true,
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.EXTERNAL,
-            enable_mouse_scrolling: true,
         });
-        this._scroll.set_child(this._body);
+
+        this._mediaCol = new St.BoxLayout({
+            vertical: true,
+            style_class: 'island-media-col',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.START,
+        });
+        this._panelDivider = new St.Widget({
+            style_class: 'island-panel-divider',
+            y_expand: true,
+        });
+        this._sideCol = new St.BoxLayout({
+            vertical: true,
+            style_class: 'island-side-col',
+            x_expand: true,
+            y_expand: true,
+            width: 305,
+        });
 
         this._views = {
             notifications: this._buildNotificationsView(),
@@ -553,20 +898,79 @@ class Island {
             clips: this._buildClipsView(),
             settings: this._buildSettingsView(),
         };
-        for (const [id, view] of Object.entries(this._views)) {
+        this._calendar = this._buildCalendarView();
+        this._lyrics = this._buildLyricsView();
+        this._lyrics.visible = false;
+        this._mediaCol.add_child(this._views.music);
+
+        // The side sheet scrolls when a tab is taller than the notch (long
+        // notification lists, Settings) instead of clipping its last row.
+        this._scroll = new St.ScrollView({
+            style_class: 'island-scroll',
+            x_expand: true,
+            y_expand: true,
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.EXTERNAL,
+            enable_mouse_scrolling: true,
+        });
+        this._scroll.set_child(this._sideCol);
+
+        this._sideCol.add_child(this._calendar);
+        this._sideCol.add_child(this._lyrics);
+        for (const id of ['notifications', 'system', 'battery', 'timer', 'weather', 'clips', 'settings']) {
+            const view = this._views[id];
             view.visible = false;
-            this._body.add_child(view);
-            if (id !== 'notifications')
-                view.connect('notify::visible', () => {
-                    if (view.visible && view.opacity < 255) {
-                        view.ease({
-                            opacity: 255,
-                            duration: this._dur(190),
-                            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-                        });
-                    }
-                });
+            this._sideCol.add_child(view);
+            view.connect('notify::visible', () => {
+                if (view.visible && view.opacity < 255) {
+                    view.ease({
+                        opacity: 255,
+                        duration: this._dur(190),
+                        mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+                    });
+                }
+            });
         }
+
+        split.add_child(this._mediaCol);
+        split.add_child(this._panelDivider);
+        split.add_child(this._scroll);
+        // Slim icon dock instead of a big clock/weather header: the card is
+        // for content (music, alerts, system), and the compact capsule
+        // already carries the time. Eight 16 px glyphs cost one 24 px row.
+        // It rides the top edge of the notch, as in the reference.
+        const tabs = new St.BoxLayout({
+            style_class: 'island-tabs',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._tabButtons = {};
+        for (const t of TABS) {
+            const b = new St.Button({
+                style_class: 'island-tab',
+                reactive: true,
+                can_focus: false,
+                accessible_name: t.label,
+            });
+            b.set_child(new St.Icon({
+                icon_name: t.icon,
+                icon_size: 16,
+                style_class: 'island-tab-icon',
+            }));
+            b.connect('enter-event', () => {
+                this._selectTab(t.id);
+                return Clutter.EVENT_PROPAGATE;
+            });
+            // Keep scrolls over the dock from leaking into the shell panel.
+            b.connect('scroll-event', () => Clutter.EVENT_STOP);
+            this._tabButtons[t.id] = b;
+            tabs.add_child(b);
+        }
+        root.add_child(tabs);
+        root.add_child(split);
+
+        box.add_child(root);
+        this._panel = box;
+        this._panelRoot = root;
         this._notifView = this._views.notifications;
         this._systemView = this._views.system;
         this._weatherView = this._views.weather;
@@ -575,12 +979,10 @@ class Island {
         this._batteryView = this._views.battery;
         this._clipsView = this._views.clips;
         this._settingsView = this._views.settings;
-        root.add_child(this._scroll);
-
-        box.add_child(root);
-        this._panel = box;
-        this._panelRoot = root;
-        this._selectTab('notifications');
+        // An empty feed must not leave the "Recent / Clear all" toolbar on
+        // screen: the first render decides that from the feed length.
+        this._renderFeed();
+        this._selectTab('music');
     }
 
     _buildAlert() {
@@ -632,56 +1034,63 @@ class Island {
         const view = new St.BoxLayout({vertical: true, style_class: 'island-view',
             x_align: Clutter.ActorAlign.FILL, y_align: Clutter.ActorAlign.FILL, x_expand: true});
 
-        this._musicEmpty = label('No media player running', 'island-empty');
-        this._musicEmpty.x_align = Clutter.ActorAlign.CENTER;
-        this._musicEmpty.y_align = Clutter.ActorAlign.CENTER;
-        this._musicEmpty.y_expand = true;
+        this._musicEmpty = new St.BoxLayout({
+            vertical: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            height: 150,
+            style_class: 'island-music-empty',
+        });
+        const emptyIcon = new St.Icon({
+            icon_name: 'audio-x-generic-symbolic',
+            icon_size: 30,
+            style_class: 'island-empty-icon',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        const emptyTitle = label('Nothing playing', 'island-empty-title');
+        emptyTitle.x_align = Clutter.ActorAlign.CENTER;
+        const emptySub = label('Start a track and it appears here', 'island-empty-sub');
+        emptySub.x_align = Clutter.ActorAlign.CENTER;
+        this._musicEmpty.add_child(emptyIcon);
+        this._musicEmpty.add_child(emptyTitle);
+        this._musicEmpty.add_child(emptySub);
 
-        // macOS 27 Dynamic Island media card, rebuilt to spec: a solid black
-        // surface with a large rounded cover on the left, title + artist, a
-        // speaker glyph at the far right, a full-width progress bar showing
-        // elapsed on the left and *remaining* time on the right, and plain
-        // white transport controls centred underneath.
+        // Reference notch media card: big rounded cover on the left, title
+        // and artist beside it, seek bar and times at the bottom of the text
+        // column, transport centred under that column. The right half of the
+        // panel is the lyrics pane (see _buildLyricsView).
         this._musicBody = new St.BoxLayout({vertical: true, style_class: 'island-music', x_expand: true});
 
-        const head = new St.BoxLayout({style_class: 'island-music-head'});
-        this._artBin = new St.Bin({style_class: 'island-art', x_align: Clutter.ActorAlign.START,
-            y_align: Clutter.ActorAlign.CENTER});
-        this._art = new St.Icon({icon_name: 'audio-x-generic-symbolic', icon_size: 30, style_class: 'island-art-icon'});
+        const ART = 92;
+        const NAME_W = 138;
+        const head = new St.BoxLayout({style_class: 'island-music-head', x_expand: true});
+        this._artBin = new St.Bin({style_class: 'island-art', width: ART, height: ART,
+            x_align: Clutter.ActorAlign.START, y_align: Clutter.ActorAlign.CENTER});
+        this._art = new St.Icon({icon_name: 'audio-x-generic-symbolic', icon_size: 32, style_class: 'island-art-icon'});
         this._artBin.set_child(this._art);
 
         const textBox = new St.BoxLayout({vertical: true, style_class: 'island-music-text',
-            x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+            x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.FILL});
         // Fixed text column: an ellipsized label still reports its full
         // natural width, which would otherwise stretch the whole capsule.
-        const TEXT_W = 340;
-        this._musicTitle = new St.Label({text: '', style_class: 'island-music-title', width: TEXT_W});
+        this._musicTitle = new St.Label({text: '', style_class: 'island-music-title', width: NAME_W});
         this._musicTitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._musicArtist = new St.Label({text: '', style_class: 'island-music-artist', width: TEXT_W});
+        this._musicArtist = new St.Label({text: '', style_class: 'island-music-artist', width: NAME_W});
         this._musicArtist.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        textBox.add_child(this._musicTitle);
-        textBox.add_child(this._musicArtist);
 
-        this._musicSpeaker = new St.Icon({
-            icon_name: 'audio-volume-high-symbolic',
-            icon_size: 22,
-            style_class: 'island-music-speaker',
-            x_align: Clutter.ActorAlign.END,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
+        const names = new St.BoxLayout({vertical: true, style_class: 'island-music-names', x_expand: true});
+        names.add_child(this._musicTitle);
+        names.add_child(this._musicArtist);
+        this._btnShuffle = this._controlButton('media-playlist-shuffle-symbolic',
+            () => this._toggleShuffle(), 'island-ctl-plain island-ctl-mini', 14);
+        this._btnShuffle.accessible_name = 'Shuffle';
+        const top = new St.BoxLayout({style_class: 'island-music-top', x_expand: true});
+        top.add_child(names);
+        top.add_child(this._btnShuffle);
+        textBox.add_child(top);
 
-        head.add_child(this._artBin);
-        head.add_child(textBox);
-        head.add_child(this._musicSpeaker);
-        this._musicBody.add_child(head);
-
-        // progress + times in one row: elapsed | bar | remaining.
-        // The bar sits in a taller strip so it can be clicked and dragged to
-        // seek; the visible line stays thin.
-        const prog = new St.BoxLayout({style_class: 'island-music-prog', x_expand: true});
-        this._musicElapsed = label('0:00', 'island-music-time');
-        // St.Bin, not a bare St.Widget: a widget without a layout manager
-        // never allocates its child, which collapsed the track to 3 px.
+        // Bar and times sit at the bottom of the cover, like the reference.
+        textBox.add_child(new St.Widget({y_expand: true}));
         this._seek = new St.Bin({style_class: 'island-music-seek',
             x_expand: true, y_align: Clutter.ActorAlign.CENTER, reactive: true});
         this._musicTrack = new St.Widget({style_class: 'island-music-track',
@@ -696,25 +1105,154 @@ class Island {
             return Clutter.EVENT_PROPAGATE;
         });
         this._seek.connect('button-release-event', (a, ev) => this._seekEvent(ev, true));
-        this._musicRemaining = label('-0:00', 'island-music-time');
-        prog.add_child(this._musicElapsed);
-        prog.add_child(this._seek);
-        prog.add_child(this._musicRemaining);
-        this._musicProg = prog;
-        this._musicBody.add_child(prog);
+        this._musicElapsed = label('0:00', 'island-music-time');
+        this._musicRemaining = label('0:00', 'island-music-time');
+        this._musicRemaining.x_align = Clutter.ActorAlign.END;
+        const times = new St.BoxLayout({style_class: 'island-music-times', x_expand: true});
+        times.add_child(this._musicElapsed);
+        times.add_child(new St.Widget({x_expand: true}));
+        times.add_child(this._musicRemaining);
+        const progBox = new St.BoxLayout({vertical: true, style_class: 'island-music-prog', x_expand: true});
+        progBox.add_child(this._seek);
+        progBox.add_child(times);
+        textBox.add_child(progBox);
+        this._musicProg = progBox;
 
-        const controls = new St.BoxLayout({style_class: 'island-controls', x_align: Clutter.ActorAlign.CENTER});
-        this._btnPrev = this._controlButton('media-skip-backward-symbolic', () => this._musicCall('Previous'), 'island-ctl-plain', 26);
-        this._btnPlay = this._controlButton('media-playback-start-symbolic', () => this._musicCall('PlayPause'), 'island-ctl-play', 30);
-        this._btnNext = this._controlButton('media-skip-forward-symbolic', () => this._musicCall('Next'), 'island-ctl-plain', 26);
-        controls.add_child(this._btnPrev);
-        controls.add_child(this._btnPlay);
-        controls.add_child(this._btnNext);
+        head.add_child(this._artBin);
+        head.add_child(textBox);
+        this._musicBody.add_child(head);
+
+        // Transport is centred under the text column, not the whole card:
+        // that is where the eye lands in the reference.
+        const controls = new St.BoxLayout({style_class: 'island-controls', x_expand: true});
+        const indent = new St.Widget({width: ART, y_expand: true});
+        const ctl = new St.BoxLayout({style_class: 'island-controls-box', x_expand: true});
+        this._btnPrev = this._controlButton('media-skip-backward-symbolic', () => this._musicCall('Previous'), 'island-ctl-plain', 20);
+        this._btnPlay = this._controlButton('media-playback-start-symbolic', () => this._musicCall('PlayPause'), 'island-ctl-play', 26);
+        this._btnNext = this._controlButton('media-skip-forward-symbolic', () => this._musicCall('Next'), 'island-ctl-plain', 20);
+        ctl.add_child(new St.Widget({x_expand: true}));
+        ctl.add_child(this._btnPrev);
+        ctl.add_child(this._btnPlay);
+        ctl.add_child(this._btnNext);
+        ctl.add_child(new St.Widget({x_expand: true}));
+        controls.add_child(indent);
+        controls.add_child(ctl);
         this._musicBody.add_child(controls);
 
         view.add_child(this._musicEmpty);
         view.add_child(this._musicBody);
+
+        this._lyricsCache = new Map();
+        this._lyricsToken = 0;
+        this._lyricsKey = null;
+        this._lyricsData = null;
+        this._lyricIndex = -2;
+        this._musicPos = 0;
         return view;
+    }
+
+    // The right half of the music face: five lyric lines with the current
+    // one lit. Fetched from LRCLIB when the face is open; no network call is
+    // made for a track that is not on screen.
+    _buildLyricsView() {
+        const view = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            style_class: 'island-lyrics',
+            x_expand: true,
+            y_expand: true,
+        });
+        const lines = new St.BoxLayout({vertical: true, x_expand: true, y_expand: true});
+        lines.add_child(new St.Widget({y_expand: true}));
+        this._lyricRows = [];
+        for (let i = 0; i < 5; i++) {
+            const row = new St.Label({
+                text: '',
+                width: 285,
+                height: 27,
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'island-lyric',
+            });
+            row.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            row.clutter_text.line_wrap = false;
+            row.opacity = 0;
+            lines.add_child(row);
+            this._lyricRows.push(row);
+        }
+        lines.add_child(new St.Widget({y_expand: true}));
+        view.add_child(lines);
+        this._lyricsMsg = new St.Label({
+            text: '',
+            style_class: 'island-lyrics-msg',
+            x_expand: true,
+            y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._lyricsMsg.visible = false;
+        view.add_child(this._lyricsMsg);
+        return view;
+    }
+
+    // The right half of the reference notch: current month, a three-day
+    // strip with today highlighted, and the full date. There is no calendar
+    // backend in the extension, so it states the date rather than inventing
+    // events.
+    _buildCalendarView() {
+        const view = new St.BoxLayout({vertical: true, style_class: 'island-calendar',
+            x_align: Clutter.ActorAlign.FILL, x_expand: true});
+
+        this._calMonth = label('', 'island-cal-month');
+        this._calDays = new St.BoxLayout({style_class: 'island-cal-days', x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER});
+        const calTop = new St.BoxLayout({style_class: 'island-cal-top', x_expand: true});
+        calTop.add_child(this._calMonth);
+        calTop.add_child(this._calDays);
+        view.add_child(calTop);
+
+        this._calCells = [];
+        for (let i = 0; i < 3; i++) {
+            const cell = new St.BoxLayout({vertical: true, style_class: 'island-cal-cell', x_expand: true});
+            const num = label('', 'island-cal-num');
+            const dow = label('', 'island-cal-dow');
+            num.x_align = Clutter.ActorAlign.CENTER;
+            dow.x_align = Clutter.ActorAlign.CENTER;
+            cell.add_child(num);
+            cell.add_child(dow);
+            this._calDays.add_child(cell);
+            this._calCells.push({cell, num, dow});
+        }
+
+        view.add_child(new St.Widget({style_class: 'island-cal-divider', x_expand: true}));
+        this._calToday = label('', 'island-cal-today');
+        view.add_child(this._calToday);
+
+        this._refreshCalendar();
+        return view;
+    }
+
+    _refreshCalendar() {
+        if (!this._calCells)
+            return;
+        const now = GLib.DateTime.new_now_local();
+        // Month and strip only change at midnight; skip the relayout until
+        // the day actually rolls over.
+        const key = now.format('%Y-%m-%d');
+        if (this._calDay === key)
+            return;
+        this._calDay = key;
+        this._calMonth.text = now.format('%B');
+        for (let i = 0; i < this._calCells.length; i++) {
+            const d = now.add_days(i - 1);
+            const c = this._calCells[i];
+            c.num.text = d.format('%d');
+            c.dow.text = d.format('%a');
+            if (i === 1)
+                c.cell.add_style_class_name('island-cal-cell-today');
+            else
+                c.cell.remove_style_class_name('island-cal-cell-today');
+        }
+        this._calToday.text = now.format('%A, %d %B');
     }
 
     _controlButton(iconName, onClick, extraClass, iconSize = 22) {
@@ -732,7 +1270,7 @@ class Island {
         const view = new St.BoxLayout({vertical: true, style_class: 'island-view',
             x_align: Clutter.ActorAlign.FILL, y_align: Clutter.ActorAlign.FILL, x_expand: true});
 
-        const presets = new St.BoxLayout({style_class: 'island-presets'});
+        const presets = new St.BoxLayout({style_class: 'island-presets', x_align: Clutter.ActorAlign.CENTER});
         this._presetButtons = {};
         for (const m of [1, 5, 10, 25]) {
             const b = new St.Button({style_class: 'island-chip', reactive: true, can_focus: false});
@@ -749,7 +1287,7 @@ class Island {
 
         this._timerTrack = new St.Widget({style_class: 'island-track island-timer-track',
             x_align: Clutter.ActorAlign.FILL});
-        this._timerTrack.set_width(520);
+        this._timerTrack.set_width(576);
         this._timerFill = new St.Widget({style_class: 'island-fill', width: 0});
         this._timerTrack.add_child(this._timerFill);
         view.add_child(this._timerTrack);
@@ -839,14 +1377,15 @@ class Island {
             return row;
         };
 
-        addToggle('clock24', '24-hour clock', 'Show 14:05 instead of 2:05 PM');
+        addToggle('clock24', '24-hour clock', '14:05, not 2:05 PM');
         addToggle('showWeather', 'Weather', 'Temperature in the bar');
-        addToggle('showBattery', 'Battery', 'Battery line in the panel header');
-        addToggle('batteryTab', 'Battery tab', 'Charge, health and cycle count');
-        addToggle('showMusic', 'Now playing', 'Show the track in the expanded bar');
-        addToggle('liveBattery', 'Battery activity', 'Charging and low battery alerts');
-        addToggle('liveDevices', 'Device activity', 'Bluetooth connect alerts');
-        addToggle('saveClips', 'Clipboard history', 'Keep copied text on disk');
+        addToggle('showBattery', 'Battery', 'Charge in the top bar');
+        addToggle('wallpaperBackground', 'Wallpaper background', 'Show a desktop or custom wallpaper');
+        addToggle('batteryTab', 'Battery tab', 'Health and cycles');
+        addToggle('showMusic', 'Now playing', 'Track in the capsule');
+        addToggle('liveBattery', 'Battery activity', 'Charge alerts');
+        addToggle('liveDevices', 'Device activity', 'Bluetooth alerts');
+        addToggle('saveClips', 'Clipboard history', 'Saved on disk');
 
         // accent
         const accentRow = new St.BoxLayout({style_class: 'island-setting'});
@@ -880,7 +1419,46 @@ class Island {
             this._settingsFoot.add_child(row);
         };
 
+        const wallpaperRow = new St.BoxLayout({style_class: 'island-setting', x_expand: true});
+        const wallpaperText = new St.BoxLayout({vertical: true, x_expand: true});
+        wallpaperText.add_child(label('Wallpaper image', 'island-setting-title'));
+        let wallpaperName = 'Current desktop wallpaper';
+        try {
+            if (this._settings.wallpaperUri)
+                wallpaperName = Gio.File.new_for_uri(this._settings.wallpaperUri).get_basename() || 'Custom image';
+        } catch (e) {
+            wallpaperName = 'Custom image';
+        }
+        const wallpaperNameLabel = label(wallpaperName, 'island-setting-sub');
+        wallpaperNameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        wallpaperNameLabel.set_width(360);
+        wallpaperText.add_child(wallpaperNameLabel);
+        wallpaperRow.add_child(wallpaperText);
+        const chooseWallpaper = new St.Button({style_class: 'island-chip', reactive: true, can_focus: false});
+        chooseWallpaper.set_child(new St.Label({text: 'Choose…', style_class: 'island-chip-label'}));
+        chooseWallpaper.connect('clicked', () => this._chooseWallpaper());
+        wallpaperRow.add_child(chooseWallpaper);
+        const desktopWallpaper = new St.Button({style_class: 'island-chip', reactive: true, can_focus: false});
+        desktopWallpaper.set_child(new St.Label({text: 'Desktop', style_class: 'island-chip-label'}));
+        desktopWallpaper.connect('clicked', () => this._setWallpaper('', true));
+        wallpaperRow.add_child(desktopWallpaper);
+        const wallpaperOff = new St.Button({
+            style_class: `island-chip${this._settings.wallpaperBackground ? '' : ' island-chip-active'}`,
+            reactive: true,
+            can_focus: false,
+        });
+        wallpaperOff.set_child(new St.Label({text: 'Off', style_class: 'island-chip-label'}));
+        wallpaperOff.connect('clicked', () => this._setWallpaper(this._settings.wallpaperUri, false));
+        wallpaperRow.add_child(wallpaperOff);
+        this._settingsFoot.add_child(wallpaperRow);
+
         chipsRow('Animation', 'speed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']]);
+        chipsRow('Pixel art', 'pixelStyle', [
+            ['spark', 'Spark'], ['anime', 'Anime'], ['car', 'Car'], ['cyberpunk', 'Cyberpunk'],
+        ]);
+        chipsRow('Wallpaper blur', 'wallpaperBlur', [
+            [0, 'Off'], [6, 'Low'], [12, 'Medium'], [20, 'Strong'],
+        ]);
         chipsRow('Auto-close', 'collapseMs', [[800, '0.8s'], [420, '0.4s'], [0, 'Off']]);
     }
 
@@ -1050,10 +1628,12 @@ class Island {
             return Clutter.EVENT_STOP;
         }
         this._seeking = true;
-        const w2 = Math.round(this._musicTrack.width * frac);
+        const w2 = Math.round(this._trackWidth() * frac);
         this._musicFill.width = w2;
-        this._musicElapsed.text = fmtDuration(frac * this._musicLength);
-        this._musicRemaining.text = `-${fmtDuration((1 - frac) * this._musicLength)}`;
+        this._musicPos = frac * this._musicLength;
+        this._musicElapsed.text = fmtDuration(this._musicPos);
+        this._musicRemaining.text = fmtDuration(this._musicLength);
+        this._updateLyrics(this._musicPos);
         return Clutter.EVENT_STOP;
     }
 
@@ -1138,9 +1718,12 @@ class Island {
 
         this._musicBody.visible = has;
         this._musicEmpty.visible = !has;
+        this._syncMusicRight();
 
         if (!has) {
-            this._musicPeekText = null;
+            this._lyricsKey = null;
+            this._lyricsData = null;
+            this._clearLyrics();
             this._refreshCompactBits();
             if (this._mode === 'panel' && this._tab === 'music')
                 this._fitPanel();
@@ -1162,6 +1745,17 @@ class Island {
             ? 'media-playback-pause-symbolic'
             : 'media-playback-start-symbolic';
 
+        let shuffle = false;
+        try {
+            shuffle = !!player.proxy.get_cached_property('Shuffle')?.unpack();
+        } catch (e) {}
+        if (this._btnShuffle) {
+            if (shuffle)
+                this._btnShuffle.add_style_class_name('island-ctl-active');
+            else
+                this._btnShuffle.remove_style_class_name('island-ctl-active');
+        }
+
         const artUrl = `${meta['mpris:artUrl'] ?? ''}`;
         if (artUrl && artUrl !== this._currentArtUrl) {
             this._currentArtUrl = artUrl;
@@ -1171,14 +1765,27 @@ class Island {
             this._setArtwork(null, null);
         }
 
-        this._musicPeekText = title || artist
-            ? `♪ ${title}${artist ? ` — ${artist}` : ''}`
-            : null;
         this._musicLength = length;
+        if (this._mode === 'panel' && this._tab === 'music')
+            this._ensureLyrics(title, artist, album, length);
         this._refreshProgress(player, length, force);
         this._refreshCompactBits();
         if (this._mode === 'panel' && this._tab === 'music')
             this._fitPanel();
+    }
+
+    // Return the allocated pixel width of the seek track, falling back to
+    // a reasonable default when the actor is not yet laid out.
+    _trackWidth() {
+        try {
+            const alloc = this._musicTrack?.get_allocation_box?.();
+            if (alloc) {
+                const w = alloc.get_width();
+                if (w > 10) return w;
+            }
+        } catch (_) {}
+        const w = this._musicTrack?.width ?? 0;
+        return w > 10 ? w : 138; // 138 = NAME_W from _buildMusicView
     }
 
     _refreshProgress(player, length, force) {
@@ -1191,12 +1798,21 @@ class Island {
         // Browser players often report no length and a frozen position; a
         // progress bar stuck at -0:00 looks broken, so hide the row instead.
         const known = length > 0;
-        if (this._musicProg)
-            this._musicProg.visible = known;
         if (!known) {
-            this._musicFill.width = 0;
+            // Players that report no duration (browsers, streams) still get
+            // a bar: an indeterminate sweep plus the elapsed time. The times
+            // row shows elapsed on the left and "--:--" on the right, and
+            // seeking stays disabled.
+            this._musicProg.visible = true;
+            this._musicElapsed.text = fmtDuration(position);
+            this._musicRemaining.text = '--:--';
+            this._musicPos = position;
+            this._updateLyrics(position);
+            this._startMarquee();
             return;
         }
+        this._stopMarquee();
+        this._musicProg.visible = true;
         // A seek we just sent has not reached the player's Position cache yet;
         // keep showing where the user dropped the bar until it catches up.
         if (this._seekPending && GLib.get_monotonic_time() / 1000 < this._seekPending.until)
@@ -1204,9 +1820,12 @@ class Island {
         else
             this._seekPending = null;
         const fraction = length > 0 ? Math.max(0, Math.min(1, position / length)) : 0;
-        const width = Math.round((this._musicTrack?.width || 300) * fraction);
+        const trackW = this._trackWidth();
+        const width = Math.round(trackW * fraction);
         this._musicElapsed.text = fmtDuration(position);
-        this._musicRemaining.text = `-${fmtDuration(Math.max(0, length - position))}`;
+        this._musicRemaining.text = fmtDuration(length);
+        this._musicPos = position;
+        this._updateLyrics(position);
         if (!force && this._musicFill.width === width)
             return;
         if (force) {
@@ -1215,9 +1834,82 @@ class Island {
         }
         this._musicFill.ease({
             width,
-            duration: this._dur(900),
+            duration: this._dur(180),
             mode: Clutter.AnimationMode.LINEAR,
         });
+    }
+
+    _setPixelStyle(style, repaint = true) {
+        const key = PIXEL_STYLES[style] ? style : 'spark';
+        this._settings.pixelStyle = key;
+        if (this._pixelStyle)
+            this._pixel.remove_style_class_name(`island-pixel-theme-${this._pixelStyle}`);
+        this._pixelStyle = key;
+        this._pixel.add_style_class_name(`island-pixel-theme-${key}`);
+        this._pixelFrames = PIXEL_STYLES[key].map(frame =>
+            frame.join('').split('').map(cell => cell === '#' ? 2 : cell === 'x' ? 1 : 0));
+        this._pixelFrame = 0;
+        if (repaint)
+            this._paintPixelFrame(0);
+    }
+
+    // Pixel art is stepped, not eased: cells only switch on/off between frames.
+    _paintPixelFrame(idx) {
+        const frame = this._pixelFrames[idx % this._pixelFrames.length];
+        for (let i = 0; i < frame.length; i++) {
+            const cell = this._pixelCells[i];
+            if (!cell)
+                continue;
+            cell.remove_style_class_name('island-pixel-on');
+            cell.remove_style_class_name('island-pixel-core');
+            if (frame[i] === 1)
+                cell.add_style_class_name('island-pixel-on');
+            else if (frame[i] === 2)
+                cell.add_style_class_name('island-pixel-core');
+        }
+    }
+
+    _startPixelAnim() {
+        if (this._pixelTimer)
+            return;
+        this._pixelTimer = this._addTimer(440, () => {
+            this._pixelFrame = (this._pixelFrame + 1) % this._pixelFrames.length;
+            this._paintPixelFrame(this._pixelFrame);
+        });
+    }
+
+    _stopPixelAnim() {
+        if (this._pixelTimer)
+            this._removeTimer(this._pixelTimer);
+        this._pixelTimer = 0;
+    }
+
+    // Indeterminate bar for players with no reported duration: a soft ping-pong
+    // sweep of the fill, ~1.1 s per sweep. Stopped as soon as a known length
+    // arrives, the tab leaves music, or the island is destroyed.
+    _startMarquee() {
+        if (this._marqueeTimer || !this._musicFill)
+            return;
+        this._marqueeDir = !this._marqueeDir;
+        const step = () => {
+            this._marqueeDir = !this._marqueeDir;
+            const trackW = this._trackWidth();
+            this._musicFill.ease({
+                width: this._marqueeDir ? Math.round(trackW * 0.42) : 0,
+                duration: this._dur(1050),
+                mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+            });
+            return GLib.SOURCE_CONTINUE;
+        };
+        this._marqueeTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1100, step);
+        step();
+    }
+
+    _stopMarquee() {
+        if (this._marqueeTimer) {
+            GLib.source_remove(this._marqueeTimer);
+            this._marqueeTimer = 0;
+        }
     }
 
     _pollMusic() {
@@ -1232,17 +1924,284 @@ class Island {
                     const [pos] = conn.call_finish(res).recursiveUnpack();
                     const length = Number(this._metadata(player)['mpris:length'] ?? 0) / 1e6;
                     if (length > 0) {
-                        const trackW = this._musicTrack?.width || 300;
-                        const width = Math.round(trackW * Math.max(0, Math.min(1, Number(pos) / 1e6 / length)));
-                        this._musicElapsed.text = fmtDuration(Number(pos) / 1e6);
-                        this._musicRemaining.text = `-${fmtDuration(Math.max(0, length - Number(pos) / 1e6))}`;
+                        let seconds = Number(pos) / 1e6;
+                        if (this._seekPending && GLib.get_monotonic_time() / 1000 < this._seekPending.until)
+                            seconds = this._seekPending.pos;
+                        else
+                            this._seekPending = null;
+                        const trackW = this._trackWidth();
+                        const width = Math.round(trackW * Math.max(0, Math.min(1, seconds / length)));
+                        this._musicElapsed.text = fmtDuration(seconds);
+                        this._musicRemaining.text = fmtDuration(length);
+                        this._musicPos = seconds;
+                        this._updateLyrics(seconds);
                         this._musicFill.ease({
                             width,
-                            duration: this._dur(950),
+                            // Position is sampled once a second. A near-second
+                            // ease visibly trails the player; use a short glide
+                            // so the bar lands on the MPRIS-reported position.
+                            duration: this._dur(120),
                             mode: Clutter.AnimationMode.LINEAR,
                         });
                     }
                 } catch (e) {}
+            });
+    }
+
+    // ---------- lyrics ----------
+
+    _ensureLyrics(title, artist, album, length) {
+        if (!this._lyrics)
+            return;
+        const key = `${title}|${artist}|${album}|${Math.round(length)}`.toLowerCase();
+        if (this._lyricsKey === key)
+            return;
+        this._lyricsKey = key;
+        this._lyricsData = null;
+        this._lyricIndex = -2;
+        this._lyricsToken++;
+        this._clearLyrics();
+
+        if (!title) {
+            this._showLyricsMessage('No track');
+            return;
+        }
+
+        const cached = this._lyricsCache.get(key);
+        if (cached) {
+            this._applyLyrics(cached);
+            return;
+        }
+
+        this._showLyricsMessage('Finding lyrics…');
+        const token = this._lyricsToken;
+        const enc = encodeURIComponent;
+        let url = `https://lrclib.net/api/get?track_name=${enc(title)}`;
+        if (artist)
+            url += `&artist_name=${enc(artist)}`;
+        if (album)
+            url += `&album_name=${enc(album)}`;
+        if (length > 0)
+            url += `&duration=${Math.round(length)}`;
+
+        this._fetchJson(url, data => {
+            if (this._destroyed || token !== this._lyricsToken)
+                return;
+            if (data && (data.syncedLyrics || data.plainLyrics)) {
+                this._applyLyrics(data);
+                return;
+            }
+            // The exact lookup is strict about album/duration; the search
+            // endpoint still finds live versions and re-releases.
+            let search = `https://lrclib.net/api/search?track_name=${enc(title)}`;
+            if (artist)
+                search += `&artist_name=${enc(artist)}`;
+            this._fetchJson(search, items => {
+                if (this._destroyed || token !== this._lyricsToken)
+                    return;
+                const usable = (Array.isArray(items) ? items : [])
+                    .filter(x => x && (x.syncedLyrics || x.plainLyrics));
+                if (!usable.length) {
+                    this._showLyricsMessage('No lyrics for this track');
+                    return;
+                }
+                const secs = Math.round(length);
+                usable.sort((a, b) => {
+                    const da = secs ? Math.abs((a.duration ?? 0) - secs) : 0;
+                    const db = secs ? Math.abs((b.duration ?? 0) - secs) : 0;
+                    return da - db;
+                });
+                this._applyLyrics(usable[0]);
+            });
+        });
+    }
+
+    _fetchJson(url, cb) {
+        let msg;
+        try {
+            msg = Soup.Message.new('GET', url);
+        } catch (e) {
+            return cb(null);
+        }
+        msg.request_headers.append('Accept', 'application/json');
+        this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+            try {
+                const bytes = session.send_and_read_finish(res);
+                if (msg.status_code !== 200)
+                    return cb(null);
+                cb(JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data())));
+            } catch (e) {
+                cb(null);
+            }
+        });
+    }
+
+    _applyLyrics(payload) {
+        if (!payload || !this._lyricsKey)
+            return;
+        this._lyricsCache.set(this._lyricsKey, payload);
+
+        if (payload.instrumental) {
+            this._showLyricsMessage('Instrumental');
+            return;
+        }
+        const synced = this._parseLrc(`${payload.syncedLyrics ?? ''}`);
+        const plain = `${payload.plainLyrics ?? ''}`
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        let data;
+        if (synced.length) {
+            data = {lines: synced, synced: true};
+        } else if (plain.length) {
+            // No timings: show the opening lines rather than inventing a
+            // position for them.
+            data = {lines: plain.slice(0, 60).map((text, i) => ({t: i, text})), synced: false};
+        } else {
+            this._showLyricsMessage('No lyrics for this track');
+            return;
+        }
+
+        this._lyricsData = data;
+        this._lyricIndex = -2;
+        this._lyricsMsg.visible = false;
+        for (const row of this._lyricRows)
+            row.visible = true;
+        if (data.synced)
+            this._updateLyrics(this._musicPos ?? 0);
+        else {
+            this._renderLyrics(0);
+            this._lyricIndex = -2;
+        }
+    }
+
+    /**
+     * LRC: "[mm:ss.xx] line", several stamps per line for repeats. Metadata
+     * tags such as [ar:] do not match the stamp regex and are ignored.
+     */
+    _parseLrc(text) {
+        const out = [];
+        for (const raw of text.split('\n')) {
+            const stamps = [...raw.matchAll(/\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
+            if (!stamps.length)
+                continue;
+            const lyric = raw.replace(/\[[^\]]*\]/g, '').trim();
+            if (!lyric)
+                continue;
+            for (const m of stamps) {
+                const frac = m[3] ? Number(`0.${m[3]}`) : 0;
+                out.push({t: Number(m[1]) * 60 + Number(m[2]) + frac, text: lyric});
+            }
+        }
+        out.sort((a, b) => a.t - b.t);
+        return out;
+    }
+
+    _updateLyrics(position) {
+        const data = this._lyricsData;
+        if (!data || !data.synced || !data.lines?.length)
+            return;
+        let idx = -1;
+        for (let i = 0; i < data.lines.length; i++) {
+            if (data.lines[i].t <= position + 0.2)
+                idx = i;
+            else
+                break;
+        }
+        if (idx === this._lyricIndex)
+            return;
+        this._lyricIndex = idx;
+        this._renderLyrics(idx);
+    }
+
+    _renderLyrics(idx) {
+        if (!this._lyricRows || !this._lyricsData)
+            return;
+        const data = this._lyricsData;
+        const start = data.synced && idx >= 0 ? Math.max(0, idx - 2) : 0;
+        for (let i = 0; i < this._lyricRows.length; i++) {
+            const row = this._lyricRows[i];
+            const line = data.lines[start + i];
+            if (!line) {
+                row.text = '';
+                row.opacity = 0;
+                continue;
+            }
+            const changed = row.text !== line.text;
+            row.text = line.text;
+            for (const cls of ['island-lyric-focus', 'island-lyric-near', 'island-lyric-far'])
+                row.remove_style_class_name(cls);
+            if (data.synced) {
+                const d = Math.abs((start + i) - idx);
+                row.add_style_class_name(d === 0 ? 'island-lyric-focus'
+                    : d === 1 ? 'island-lyric-near' : 'island-lyric-far');
+            } else {
+                row.add_style_class_name('island-lyric-near');
+            }
+            if (changed) {
+                row.opacity = 0;
+                row.ease({
+                    opacity: 255,
+                    duration: this._dur(240),
+                    mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+                });
+            } else {
+                row.opacity = 255;
+            }
+        }
+    }
+
+    _showLyricsMessage(text) {
+        if (!this._lyricsMsg)
+            return;
+        for (const row of this._lyricRows) {
+            row.text = '';
+            row.opacity = 0;
+        }
+        this._lyricsMsg.text = text;
+        this._lyricsMsg.visible = true;
+        this._lyricsMsg.opacity = 0;
+        this._lyricsMsg.ease({
+            opacity: 255,
+            duration: this._dur(220),
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+        });
+    }
+
+    _clearLyrics() {
+        if (!this._lyricRows)
+            return;
+        for (const row of this._lyricRows) {
+            row.text = '';
+            row.opacity = 0;
+        }
+        if (this._lyricsMsg)
+            this._lyricsMsg.visible = false;
+    }
+
+    _toggleShuffle() {
+        const player = this._activePlayer();
+        if (!player)
+            return;
+        let current = false;
+        try {
+            current = !!player.proxy.get_cached_property('Shuffle')?.unpack();
+        } catch (e) {}
+        const next = !current;
+        this._dbus.call(player.name, '/org/mpris/MediaPlayer2',
+            'org.freedesktop.DBus.Properties', 'Set',
+            new GLib.Variant('(ssv)', ['org.mpris.MediaPlayer2.Player', 'Shuffle',
+                new GLib.Variant('b', next)]),
+            null, Gio.DBusCallFlags.NONE, 1500, null, (conn, res) => {
+                try {
+                    conn.call_finish(res);
+                    if (!this._btnShuffle)
+                        return;
+                    if (next)
+                        this._btnShuffle.add_style_class_name('island-ctl-active');
+                    else
+                        this._btnShuffle.remove_style_class_name('island-ctl-active');
+                } catch (e) {
+                    LOG('shuffle failed', e.message);
+                }
             });
     }
 
@@ -1329,7 +2288,7 @@ class Island {
         this._timerToggle.add_style_class_name('island-pill-primary');
         const total = this._timerTotal ?? ((this._timerMinutes ?? 25) * 60000);
         const fraction = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
-        this._timerFill.width = Math.round(520 * fraction);
+        this._timerFill.width = Math.round(576 * fraction);
         this._timerState.text = this._timerRunning ? 'Running' : (remaining > 0 ? 'Paused' : 'Finished');
     }
 
@@ -1428,15 +2387,103 @@ class Island {
     }
 
     _buildWeatherView() {
-        const view = new St.BoxLayout({vertical: true, style_class: 'island-view',
+        const view = new St.BoxLayout({vertical: true, style_class: 'island-view island-weather-view',
             x_align: Clutter.ActorAlign.FILL, y_align: Clutter.ActorAlign.FILL, x_expand: true});
-        this._weatherHead = label('', 'island-weather-head');
-        this._weatherDetail = label('', 'island-sub');
-        view.add_child(this._weatherHead);
+
+        const header = new St.BoxLayout({style_class: 'island-weather-header', x_expand: true});
+        const primary = new St.BoxLayout({vertical: true, style_class: 'island-weather-primary', x_expand: true});
+        const locRow = new St.BoxLayout({style_class: 'island-weather-loc-row', x_expand: true});
+        this._weatherLocIcon = new St.Icon({icon_name: 'mark-location-symbolic', icon_size: 13,
+            style_class: 'island-weather-loc-icon', y_align: Clutter.ActorAlign.CENTER});
+        this._weatherLocLabel = label('', 'island-weather-loc');
+        this._weatherLocLabel.x_expand = true;
+        locRow.add_child(this._weatherLocIcon);
+        locRow.add_child(this._weatherLocLabel);
+        primary.add_child(locRow);
+
+        const current = new St.BoxLayout({style_class: 'island-weather-current', x_expand: true});
+        this._weatherNowIcon = new St.Icon({
+            icon_name: 'weather-overcast-symbolic', icon_size: 38,
+            style_class: 'island-weather-now-icon', y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._weatherTemp = label('—°', 'island-weather-temp');
+        const units = new St.BoxLayout({style_class: 'island-weather-units', y_align: Clutter.ActorAlign.CENTER});
+        this._weatherUnitButtons = {};
+        for (const [unit, title] of [['c', '°C'], ['f', '°F']]) {
+            const button = new St.Button({style_class: 'island-weather-unit', reactive: true,
+                can_focus: false, accessible_name: title});
+            button.set_child(new St.Label({text: title, style_class: 'island-weather-unit-label'}));
+            button.connect('clicked', () => {
+                this._weatherUnit = unit;
+                this._renderWeather();
+            });
+            this._weatherUnitButtons[unit] = button;
+            units.add_child(button);
+        }
+        current.add_child(this._weatherNowIcon);
+        current.add_child(this._weatherTemp);
+        current.add_child(units);
+        primary.add_child(current);
+        header.add_child(primary);
+
+        const summary = new St.BoxLayout({vertical: true, style_class: 'island-weather-summary',
+            x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER});
+        this._weatherTitle = label('Weather', 'island-weather-title');
+        this._weatherTime = label('', 'island-weather-time');
+        this._weatherCondition = label('', 'island-weather-condition');
+        for (const item of [this._weatherTitle, this._weatherTime, this._weatherCondition]) {
+            item.x_align = Clutter.ActorAlign.END;
+            summary.add_child(item);
+        }
+        header.add_child(summary);
+        view.add_child(header);
+
+        this._weatherDetail = new St.BoxLayout({style_class: 'island-weather-stats', x_expand: true});
+        this._weatherStatRain = label('Precipitation —', 'island-weather-stat');
+        this._weatherStatHumidity = label('Humidity —', 'island-weather-stat');
+        this._weatherStatWind = label('Wind —', 'island-weather-stat');
+        this._weatherDetail.add_child(this._weatherStatRain);
+        this._weatherDetail.add_child(new St.Widget({style_class: 'island-weather-separator'}));
+        this._weatherDetail.add_child(this._weatherStatHumidity);
+        this._weatherDetail.add_child(new St.Widget({style_class: 'island-weather-separator'}));
+        this._weatherDetail.add_child(this._weatherStatWind);
         view.add_child(this._weatherDetail);
-        this._hourlyBox = new St.BoxLayout({style_class: 'island-hourly', x_expand: true});
-        view.add_child(this._hourlyBox);
-        this._dailyBox = new St.BoxLayout({vertical: true, style_class: 'island-daily'});
+
+        const metrics = new St.BoxLayout({style_class: 'island-weather-metrics', x_expand: true});
+        this._weatherMetricButtons = {};
+        for (const [metric, title] of [['temperature', 'Temperature'], ['precipitation', 'Precipitation'], ['wind', 'Wind']]) {
+            const button = new St.Button({style_class: 'island-weather-metric', reactive: true,
+                can_focus: false, accessible_name: title});
+            const content = new St.BoxLayout({vertical: true, style_class: 'island-weather-metric-content'});
+            content.add_child(new St.Label({text: title, style_class: 'island-weather-metric-label'}));
+            content.add_child(new St.Widget({style_class: 'island-weather-metric-indicator', x_expand: true}));
+            button.set_child(content);
+            button.connect('clicked', () => {
+                this._weatherMetric = metric;
+                this._renderWeather();
+            });
+            this._weatherMetricButtons[metric] = button;
+            metrics.add_child(button);
+        }
+        view.add_child(metrics);
+
+        this._weatherChartPoints = [];
+        this._weatherChartArea = new St.DrawingArea({style_class: 'island-weather-chart',
+            x_expand: true, height: 98});
+        this._weatherChartArea.connect('repaint', area => this._drawWeatherChart(area));
+        view.add_child(this._weatherChartArea);
+        this._weatherAxis = new St.BoxLayout({style_class: 'island-weather-axis', x_expand: true});
+        this._weatherAxisLabels = [];
+        for (let i = 0; i < 8; i++) {
+            const tick = label('', 'island-weather-axis-label');
+            tick.x_expand = true;
+            tick.x_align = Clutter.ActorAlign.CENTER;
+            this._weatherAxisLabels.push(tick);
+            this._weatherAxis.add_child(tick);
+        }
+        view.add_child(this._weatherAxis);
+
+        this._dailyBox = new St.BoxLayout({style_class: 'island-daily', x_expand: true});
         view.add_child(this._dailyBox);
         return view;
     }
@@ -1444,7 +2491,7 @@ class Island {
     // ---------- mode ----------
 
     _showOnly(widget) {
-        for (const w of [this._compact, this._peek, this._panel, this._alert])
+        for (const w of [this._compact, this._panel, this._alert])
             w.visible = w === widget;
     }
 
@@ -1461,11 +2508,14 @@ class Island {
         // swap content instantly, then animate the capsule: clip_to_allocation
         // makes the reveal grow/shrink without any content jumping about.
         this._showOnly(mode === 'compact' ? this._compact
-            : mode === 'peek' ? this._peek
             : mode === 'alert' ? this._alert
             : this._panel);
 
         if (mode === 'panel') {
+            // Hover opens straight into the card. If something is playing,
+            // open on the player: that is the expanded face of the island.
+            if (prev === 'compact' && this._settings.showMusic && this._activePlayer())
+                this._tab = 'music';
             size.height = this._measurePanelHeight();
             this._targetPanelHeight = size.height;
         }
@@ -1473,12 +2523,13 @@ class Island {
         this._capsule.remove_style_class_name(MODES[prev].style);
         this._capsule.add_style_class_name(size.style);
 
+        const duration = this._dur(DURATION);
         this._capsule.ease({
             x: Math.round((FRAME.width - size.width) / 2),
-            y: CAP_TOP,
+            y: mode === 'panel' ? 0 : CAP_TOP,
             width: size.width,
             height: size.height,
-            duration: DURATION,
+            duration,
             mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
         });
 
@@ -1493,7 +2544,7 @@ class Island {
             this._removeStageHandlers();
         }
 
-        if (mode === 'compact' || mode === 'peek')
+        if (mode === 'compact')
             this._refreshCompactBits();
 
         this._updateBadge();
@@ -1509,8 +2560,11 @@ class Island {
 
     _onHoverChanged() {
         if (this._hovered) {
+            this._removeTimer(this._collapseId);
+            // Direct open: the old 56 px peek was a separate animation that
+            // added nothing. One hover, one smooth expansion to the card.
             if (this._mode === 'compact')
-                this._setMode('peek');
+                this._setMode('panel');
             return;
         }
         this._removeTimer(this._collapseId);
@@ -1523,7 +2577,7 @@ class Island {
                 return GLib.SOURCE_REMOVE;
             if (this._capsule.hover)
                 return GLib.SOURCE_REMOVE;
-            if (this._mode === 'panel' || this._mode === 'peek')
+            if (this._mode === 'panel')
                 this._setMode('compact');
             return GLib.SOURCE_REMOVE;
         });
@@ -1576,8 +2630,22 @@ class Island {
                 btn.remove_style_class_name('island-tab-active');
         }
 
-        for (const view of Object.values(this._views)) {
-            if (view !== next)
+        // Music tab keeps the reference split (player left, lyrics right).
+        // Every other tab needs the full width, so the player column folds
+        // away and the sheet takes the whole slab.
+        const musicFace = id === 'music';
+        if (this._mediaCol)
+            this._mediaCol.visible = musicFace;
+        if (this._panelDivider)
+            this._panelDivider.visible = musicFace;
+        if (this._sideCol)
+            this._sideCol.set_width(musicFace ? 305 : 608);
+        this._syncMusicRight();
+        if (musicFace)
+            this._refreshCalendar();
+
+        for (const [vid, view] of Object.entries(this._views)) {
+            if (view !== next && vid !== 'music')
                 view.hide();
         }
 
@@ -1608,6 +2676,10 @@ class Island {
             this._refreshMusic(true);
         } else if (id === 'timer') {
             this._refreshTimer();
+        } else if (id === 'clips') {
+            // Card heights depend on the allocation of the now-visible view,
+            // and Pango reflows wrapped text a frame or two after it is shown.
+            this._scheduleClipFit(320);
         } else if (id === 'settings') {
             this._renderSettings();
         }
@@ -1617,12 +2689,23 @@ class Island {
         this._fitPanel();
     }
 
+    // The right half follows playback: lyrics while a track is loaded, the
+    // date when the player is empty. Every non-music tab hides both.
+    _syncMusicRight() {
+        const face = this._tab === 'music' && this._mode === 'panel';
+        const playing = face && !!this._activePlayer();
+        if (this._calendar)
+            this._calendar.visible = face && !playing;
+        if (this._lyrics)
+            this._lyrics.visible = playing;
+    }
+
     // Preferred height of the panel chrome + current tab, clamped so a long
     // notification list scrolls instead of growing off the screen.
     _measurePanelHeight() {
         try {
             const [, nat] = this._panel.get_preferred_height(MODES.panel.width);
-            return Math.max(250, Math.min(470, Math.ceil(nat)));
+            return Math.max(210, Math.min(470, Math.ceil(nat)));
         } catch (e) {
             return panelHeight(this._tab, this);
         }
@@ -1631,6 +2714,9 @@ class Island {
     _fitPanel() {
         if (this._mode !== 'panel' || !this._capsule || !this._panel)
             return;
+        // Force a synchronous layout pass so get_preferred_height sees the
+        // current content (e.g. after deleting a notification row).
+        try { this._panel.queue_relayout(); } catch (_) {}
         const target = this._measurePanelHeight();
         if (this._targetPanelHeight === target)
             return;
@@ -1657,6 +2743,7 @@ class Island {
         this._capsule.add_style_class_name(`accent-${this._settings.accent}`);
 
         this._tickClock();
+        this._refreshWallpaper();
         this._refreshCompactBits();
         this._refreshSystem();
         this._applyTabVisibility();
@@ -1664,6 +2751,8 @@ class Island {
 
     _setSetting(key, value) {
         this._settings[key] = value;
+        if (key === 'pixelStyle')
+            this._setPixelStyle(value);
         saveSettings(this._settings);
         // Clipboard polling follows the switch immediately, so turning history
         // off stops reading the selection in the same click.
@@ -1696,9 +2785,32 @@ class Island {
         return id;
     }
 
+    // One-shot companion to _addTimer. The id lives in the same list, so
+    // destroy() cancels a pending fit like any other timer.
+    _addOneShot(ms, fn) {
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            const i = this._timers.indexOf(id);
+            if (i >= 0)
+                this._timers.splice(i, 1);
+            if (!this._capsule || this._destroyed)
+                return GLib.SOURCE_REMOVE;
+            try {
+                fn();
+            } catch (e) {
+                LOG('timer error', e);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+        this._timers.push(id);
+        return id;
+    }
+
     _removeTimer(id) {
         if (!id)
             return;
+        const i = this._timers.indexOf(id);
+        if (i >= 0)
+            this._timers.splice(i, 1);
         GLib.source_remove(id);
     }
 
@@ -1709,26 +2821,26 @@ class Island {
         const t = fmtTime(now, this._settings.clock24);
         this._clockCompact.text = t;
         this._dateCompact.text = fmtDateShort(now);
-        this._clockPeek.text = t;
-        this._clockPanel.text = t;
-        this._datePeek.text = fmtDate(now);
-        this._datePanel.text = fmtDate(now);
+        this._refreshCalendar();
     }
 
+    // Compact slot: timer wins, then charging, then weather. The battery chip
+    // is useful here only while charging; battery activity alerts have their
+    // own setting and stay independent of this display.
     _refreshCompactBits() {
         const batt = this._battery();
-        this._systemPeek.text = batt ? `${batt.percent}% ${batt.state}` : '';
-        this._batteryPanel.text = batt && this._settings.showBattery
-            ? `${batt.percent}% ${batt.state}`
-            : '';
-        this._batteryPanel.visible = !!batt && this._settings.showBattery;
 
-        // Compact slot: timer wins, then charging, then weather.
-        const charging = !!batt && this._settings.liveBattery && batt.charging;
+        const charging = !!batt && this._settings.showBattery && batt.charging;
         if (this._chargeChip) {
-            this._chargeChip.visible = charging;
-            if (charging)
+            const show = charging;
+            this._chargeChip.visible = show;
+            if (show) {
+                this._chargeIcon.icon_name = 'battery-charging-symbolic';
                 this._chargeText.text = `${batt.percent}%`;
+                for (const cls of ['island-charge-charging', 'island-charge-ok', 'island-charge-warn', 'island-charge-low'])
+                    this._chargeChip.remove_style_class_name(cls);
+                this._chargeChip.add_style_class_name('island-charge-charging');
+            }
         }
         let mini = '';
         if (this._timerRunning || (this._timerRemaining > 0 && this._timerRemaining < this._timerTotal))
@@ -1738,22 +2850,8 @@ class Island {
         this._tempCompact.text = charging ? '' : mini;
         this._tempCompact.visible = !!mini && !charging;
 
-        const weatherLine = this._weather?.available
-            ? `${WEATHER_GLYPH[this._weather.code] ?? ''} ${Math.round(this._weather.temp)}°  ${WEATHER_CODES[this._weather.code] ?? ''}`
-            : 'Weather unavailable';
-        this._weatherPeek.text = this._settings.showWeather ? weatherLine : '';
-        this._weatherPeek.visible = !!this._settings.showWeather;
-        if (this._weatherPanel) {
-            this._weatherPanel.text = weatherLine;
-            this._weatherPanel.visible = !!this._settings.showWeather;
-        }
-
-        // Peek: now-playing echoes in the right column under the weather line.
-        if (this._settings.showMusic && this._musicPeekText)
-            this._systemPeek.text = this._musicPeekText;
-
-        // Compact / peek now-playing: macOS style - artwork thumbnail and a
-        // live three-bar equaliser while something is actually playing.
+        // Compact now-playing: macOS style - artwork thumbnail and a live
+        // three-bar equaliser while something is actually playing.
         const player = this._settings.showMusic ? this._activePlayer() : null;
         const hasMusic = !!player;
         const playing = hasMusic && this._status(player) === 'Playing';
@@ -1843,7 +2941,7 @@ class Island {
         this._alertTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, item.duration, () => {
             this._alertTimerId = 0;
             if (this._mode === 'alert')
-                this._setMode(this._capsule?.hover ? 'peek' : 'compact');
+                this._setMode(this._capsule?.hover ? 'panel' : 'compact');
             this._alertTarget = null;
             this._alertActivate = null;
             if (this._activities.length) {
@@ -2152,7 +3250,6 @@ class Island {
 
         this._notifEmpty.visible = this._feed.length === 0;
         this._notifBar.visible = this._feed.length > 0;
-
         for (const item of this._feed.slice(0, 6)) {
             const row = new St.BoxLayout({style_class: 'island-notif'});
             const icon = new St.Icon({
@@ -2165,13 +3262,13 @@ class Island {
             text.add_child(new St.Label({
                 text: item.title,
                 style_class: 'island-notif-title',
-                width: 366,
+                width: 470,
             }));
             if (item.body) {
                 text.add_child(new St.Label({
                     text: item.body,
                     style_class: 'island-notif-body',
-                    width: 366,
+                    width: 470,
                 }));
             }
             const time = new St.Label({
@@ -2233,6 +3330,7 @@ class Island {
         this._unseen = Math.max(0, this._unseen - 1);
         this._updateBadge();
         this._renderFeed();
+        this._fitPanel();
     }
 
     _clearAllNotifications() {
@@ -2242,6 +3340,7 @@ class Island {
         this._unseen = 0;
         this._updateBadge();
         this._renderFeed();
+        this._fitPanel();
     }
 
     _buildClipsView() {
@@ -2317,21 +3416,22 @@ class Island {
         }
         if (this._clipScroll) {
             this._clipScroll.visible = has;
-            if (has) {
-                const rows = Math.min(this._clips.length, CLIP_VISIBLE);
-                this._clipScroll.height = rows * CLIP_ROW_H + (rows - 1) * 8;
-                this._clipScroll.vscrollbar_policy = this._clips.length > CLIP_VISIBLE
-                    ? St.PolicyType.EXTERNAL : St.PolicyType.NEVER;
-            }
+            if (has)
+                this._clipScroll.vscrollbar_policy = St.PolicyType.AUTOMATIC;
         }
-        this._clipCount.text = `${this._clips.length} clip${this._clips.length === 1 ? '' : 's'}`
-            + (this._clips.length > CLIP_VISIBLE ? ' · scroll' : '');
         for (const item of this._clips) {
             const row = new St.BoxLayout({style_class: `island-clip${item.flash ? ' island-clip-flash' : ''}`,
                 x_expand: true});
             const textBox = new St.BoxLayout({vertical: true, style_class: 'island-clip-text', x_expand: true});
-            const main = new St.Label({text: item.text, style_class: 'island-clip-main', width: 352});
-            main.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            // Trailing whitespace from a copied line would add an empty line
+            // to the card; CRLF comes in from terminals and Windows apps.
+            const text = item.text.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\s+$/, '');
+            const main = new St.Label({text, style_class: 'island-clip-main', width: CLIP_TEXT_W});
+            // Wrap instead of ellipsizing: the full clip stays readable, and
+            // WORD_CHAR breaks long URLs rather than overflowing the card.
+            main.clutter_text.line_wrap = true;
+            main.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            main.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
             const when = item.flash ? 'Copied' : (item.when ? fmtTime(new Date(item.when * 1000)) : '');
             textBox.add_child(main);
             if (when)
@@ -2352,6 +3452,59 @@ class Island {
             row.add_child(del);
             this._clipList.add_child(row);
         }
+        // A clip card is as tall as its wrapped text plus the timestamp, so
+        // there is no constant row height to multiply. Keep the viewport at
+        // the cap until a layout pass can report real heights, then snap it.
+        if (has) {
+            this._clipCount.text = `${this._clips.length} clip${this._clips.length === 1 ? '' : 's'}`;
+            this._clipScroll.height = CLIP_VIEW_MAX;
+            this._scheduleClipFit();
+        } else if (this._tab === 'clips') {
+            this._fitPanel();
+        }
+    }
+
+    // Card heights are only known after Pango has laid the wrapped text out.
+    // Measure on the next idle instead of trusting numbers from mid-build:
+    // the old code reserved 46 px per row and cut every taller card.
+    _scheduleClipFit(delay = 60) {
+        this._removeTimer(this._clipFitId);
+        this._clipFitId = this._addOneShot(delay, () => {
+            this._clipFitId = 0;
+            this._fitClipViewport();
+        });
+    }
+
+    _fitClipViewport() {
+        if (!this._clipScroll || !this._clipList || !this._clips.length)
+            return;
+        const rows = this._clipList.get_children();
+        let total = 0;
+        let viewH = 0;
+        let visible = 0;
+        for (const row of rows) {
+            let h = Math.ceil(row.height);
+            if (!h) {
+                try {
+                    h = Math.ceil(row.get_preferred_height(MODES.panel.width - 44)[1]);
+                } catch (e) {
+                    h = 62;
+                }
+            }
+            const next = total + (visible ? CLIP_GAP : 0) + h;
+            if (next <= CLIP_VIEW_MAX || visible === 0)
+                viewH = Math.min(next, CLIP_VIEW_MAX);
+            total = next;
+            visible++;
+        }
+        this._clipScroll.height = Math.max(1, viewH);
+        const more = total > viewH;
+        this._clipScroll.vscrollbar_policy = more
+            ? St.PolicyType.AUTOMATIC : St.PolicyType.NEVER;
+        this._clipCount.text = `${this._clips.length} clip${this._clips.length === 1 ? '' : 's'}`
+            + (more ? ' · scroll' : '');
+        if (this._tab === 'clips')
+            this._fitPanel();
     }
 
     // ---------- clipboard ----------
@@ -2686,8 +3839,6 @@ class Island {
             this._systemFoot.text = `${disk.freeGb} GB free · up ${hours}h ${pad(mins)}m`;
         }
 
-        const batt = this._battery();
-        this._batteryPanel.text = batt ? `Battery ${batt.percent}% · ${batt.state}` : 'No battery';
         this._refreshCompactBits();
     }
 
@@ -2926,7 +4077,7 @@ class Island {
         const lon = w?.longitude ?? w?.lon;
 
         if (lat != null && lon != null) {
-            this._fetchWeather(lat, lon, w?.name ?? null);
+            this._fetchWeather(lat, lon, w?.label ?? w?.name ?? null);
             return;
         }
 
@@ -2944,16 +4095,19 @@ class Island {
                 this._refreshCompactBits();
                 return;
             }
-            this._fetchWeather(hit.latitude, hit.longitude, hit.name);
+            const location = [hit.name, hit.admin1, hit.country]
+                .filter((part, index, parts) => part && parts.indexOf(part) === index)
+                .join(', ');
+            this._fetchWeather(hit.latitude, hit.longitude, location);
         });
     }
 
     _fetchWeather(lat, lon, name) {
         const params = [
             'current=temperature_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m,relative_humidity_2m',
-            'hourly=temperature_2m,precipitation_probability,weather_code',
-            'daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max',
-            'timezone=auto', 'forecast_days=2',
+            'hourly=temperature_2m,precipitation_probability,weather_code,wind_speed_10m',
+            'daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,weather_code',
+            'timezone=auto', 'forecast_days=8',
             `latitude=${lat}`, `longitude=${lon}`,
         ].join('&');
         const url = `https://api.open-meteo.com/v1/forecast?${params}`;
@@ -2972,6 +4126,7 @@ class Island {
                 temp: Number(c.temperature_2m),
                 feels: Number(c.apparent_temperature),
                 code,
+                time: c.time ?? '',
                 humidity: Number(c.relative_humidity_2m),
                 wind: Number(c.wind_speed_10m),
                 rain: Number(c.precipitation),
@@ -2981,12 +4136,14 @@ class Island {
                     temp: json.hourly?.temperature_2m?.[i] ?? null,
                     rain: json.hourly?.precipitation_probability?.[i] ?? null,
                     code: json.hourly?.weather_code?.[i] ?? null,
+                    wind: json.hourly?.wind_speed_10m?.[i] ?? null,
                 })),
                 daily: (json.daily?.time ?? []).map((t, i) => ({
                     time: t,
                     max: json.daily?.temperature_2m_max?.[i] ?? null,
                     min: json.daily?.temperature_2m_min?.[i] ?? null,
                     rain: json.daily?.precipitation_probability_max?.[i] ?? null,
+                    code: json.daily?.weather_code?.[i] ?? null,
                 })),
             };
             this._renderWeather();
@@ -2997,47 +4154,216 @@ class Island {
     _renderWeather() {
         const w = this._weather;
         if (!w || !w.available) {
-            this._weatherHead.text = 'Weather unavailable';
-            this._weatherDetail.text = 'No location configured';
+            this._weatherNowIcon.icon_name = 'weather-severe-alert-symbolic';
+            this._weatherTemp.text = '—°';
+            this._weatherTitle.text = 'Weather';
+            this._weatherTime.text = '';
+            this._weatherCondition.text = 'Forecast unavailable';
+            this._weatherStatRain.text = 'Precipitation —';
+            this._weatherStatHumidity.text = 'Humidity —';
+            this._weatherStatWind.text = 'Wind —';
+            this._weatherChartPoints = [];
+            for (const button of Object.values(this._weatherMetricButtons ?? {}))
+                button.remove_style_class_name('island-weather-metric-active');
+            this._weatherMetricButtons?.[this._weatherMetric]?.add_style_class_name('island-weather-metric-active');
+            for (const [unit, button] of Object.entries(this._weatherUnitButtons ?? {})) {
+                if (unit === this._weatherUnit)
+                    button.add_style_class_name('island-weather-unit-active');
+                else
+                    button.remove_style_class_name('island-weather-unit-active');
+            }
+            this._weatherChartArea?.queue_repaint();
+            this._dailyBox?.get_children().forEach(child => child.destroy());
+            if (this._weatherLocLabel)
+                this._weatherLocLabel.text = 'Unknown location';
+            for (const tick of this._weatherAxisLabels ?? [])
+                tick.text = '';
             return;
         }
-        this._weatherHead.text = `${WEATHER_GLYPH[w.code] ?? ''}  ${Math.round(w.temp)}°C  ·  ${WEATHER_CODES[w.code] ?? ''}`;
-        this._weatherDetail.text = `${w.name ? `${w.name} · ` : ''}feels ${Math.round(w.feels)}° · humidity ${Math.round(w.humidity)}% · wind ${Math.round(w.wind)} km/h`;
 
-        for (const c of this._hourlyBox.get_children())
-            c.destroy();
-        const start = new Date();
-        const hour = start.getHours();
-        const items = (w.hourly ?? []).filter(h => {
-            const hh = Number(h.time?.slice(11, 13));
-            return hh >= hour;
-        }).slice(0, 6);
-        for (const h of items) {
-            const cell = new St.BoxLayout({vertical: true, style_class: 'island-hour'});
-            cell.add_child(new St.Label({text: `${pad(Number(h.time.slice(11, 13)))}:00`, style_class: 'island-hour-time'}));
-            cell.add_child(new St.Label({text: WEATHER_GLYPH[h.code] ?? '', style_class: 'island-hour-glyph'}));
-            cell.add_child(new St.Label({text: h.temp == null ? '' : `${Math.round(h.temp)}°`, style_class: 'island-hour-temp'}));
-            cell.add_child(new St.Label({text: h.rain == null ? '' : `${h.rain}%`, style_class: 'island-hour-rain'}));
-            this._hourlyBox.add_child(cell);
+        if (this._weatherLocLabel)
+            this._weatherLocLabel.text = w.name || 'Your location';
+        this._weatherNowIcon.icon_name = WEATHER_ICON[w.code] ?? 'weather-overcast-symbolic';
+        const toDisplayTemp = value => this._weatherUnit === 'f'
+            ? (Number(value) * 9 / 5) + 32
+            : Number(value);
+        this._weatherTemp.text = `${Math.round(toDisplayTemp(w.temp))}°`;
+        for (const [unit, button] of Object.entries(this._weatherUnitButtons ?? {})) {
+            if (unit === this._weatherUnit)
+                button.add_style_class_name('island-weather-unit-active');
+            else
+                button.remove_style_class_name('island-weather-unit-active');
         }
+
+        const currentDate = (w.time ?? '').slice(0, 10).split('-').map(Number);
+        const currentClock = (w.time ?? '').slice(11, 16).split(':').map(Number);
+        if (currentDate.length === 3 && currentDate.every(Number.isFinite) && currentClock.length === 2) {
+            const weekday = new Date(Date.UTC(currentDate[0], currentDate[1] - 1, currentDate[2]))
+                .toLocaleDateString(undefined, {weekday: 'long', timeZone: 'UTC'});
+            const hour = currentClock[0] ?? 0;
+            const minute = `${currentClock[1] ?? 0}`.padStart(2, '0');
+            this._weatherTime.text = `${weekday}, ${hour % 12 || 12}:${minute} ${hour < 12 ? 'am' : 'pm'}`;
+        } else {
+            this._weatherTime.text = '';
+        }
+        this._weatherTitle.text = 'Weather';
+        this._weatherCondition.text = WEATHER_CODES[w.code] ?? 'Current conditions';
+
+        const currentHour = (w.hourly ?? []).find(h => h.time >= (w.time ?? '')) ?? w.hourly?.[0];
+        this._weatherStatRain.text = `Precipitation ${currentHour?.rain ?? 0}%`;
+        this._weatherStatHumidity.text = `Humidity ${Math.round(w.humidity)}%`;
+        this._weatherStatWind.text = `Wind ${Math.round(w.wind)} km/h`;
+
+        const chartHours = (w.hourly ?? []).filter(h => h.time >= (w.time ?? '')).slice(0, 24);
+        const metricKey = this._weatherMetric === 'precipitation' ? 'rain'
+            : this._weatherMetric === 'wind' ? 'wind' : 'temp';
+        this._weatherChartPoints = chartHours.map(h => {
+            const raw = Number(h[metricKey]);
+            return {time: h.time, value: Number.isFinite(raw)
+                ? (metricKey === 'temp' ? toDisplayTemp(raw) : raw)
+                : null};
+        }).filter(point => Number.isFinite(point.value));
+        for (const [metric, button] of Object.entries(this._weatherMetricButtons ?? {})) {
+            if (metric === this._weatherMetric)
+                button.add_style_class_name('island-weather-metric-active');
+            else
+                button.remove_style_class_name('island-weather-metric-active');
+        }
+        const axisPoints = this._weatherChartPoints;
+        this._weatherAxisLabels.forEach((tick, i) => {
+            const point = axisPoints[Math.round(i * (axisPoints.length - 1) / 7)];
+            if (!point) {
+                tick.text = '';
+                return;
+            }
+            const hour = Number(point.time.slice(11, 13));
+            tick.text = `${hour % 12 || 12} ${hour < 12 ? 'am' : 'pm'}`;
+        });
+        this._weatherChartArea.queue_repaint();
 
         for (const c of this._dailyBox.get_children())
             c.destroy();
-        for (const d of (w.daily ?? []).slice(0, 2)) {
-            const row = new St.BoxLayout({style_class: 'island-day'});
-            const date = new Date(`${d.time}T12:00:00`);
-            row.add_child(new St.Label({
-                text: date.toLocaleDateString(undefined, {weekday: 'short'}),
-                style_class: 'island-day-name',
+        for (const d of (w.daily ?? []).slice(0, 8)) {
+            const card = new St.BoxLayout({vertical: true, style_class: 'island-day-card', x_expand: true});
+            const dateParts = d.time.split('-').map(Number);
+            const date = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
+            card.add_child(new St.Label({
+                text: date.toLocaleDateString(undefined, {weekday: 'short', timeZone: 'UTC'}),
+                style_class: 'island-day-name', x_align: Clutter.ActorAlign.CENTER,
             }));
-            row.add_child(new St.Widget({x_expand: true}));
-            row.add_child(new St.Label({text: `${Math.round(d.min)}° / ${Math.round(d.max)}°`, style_class: 'island-day-temp'}));
-            row.add_child(new St.Label({text: `☂ ${d.rain ?? 0}%`, style_class: 'island-day-rain'}));
-            this._dailyBox.add_child(row);
+            card.add_child(new St.Icon({
+                icon_name: WEATHER_ICON[d.code] ?? 'weather-overcast-symbolic',
+                icon_size: 23,
+                style_class: 'island-day-icon',
+                x_align: Clutter.ActorAlign.CENTER,
+            }));
+            const temps = new St.BoxLayout({style_class: 'island-day-temperatures', x_align: Clutter.ActorAlign.CENTER});
+            temps.add_child(new St.Label({text: `${Math.round(toDisplayTemp(d.max))}°`, style_class: 'island-day-high'}));
+            temps.add_child(new St.Label({text: `${Math.round(toDisplayTemp(d.min))}°`, style_class: 'island-day-low'}));
+            card.add_child(temps);
+            this._dailyBox.add_child(card);
         }
+        if (!w.daily?.length)
+            this._dailyBox.add_child(label('Daily forecast unavailable', 'island-weather-empty'));
 
         if (this._mode === 'panel' && this._tab === 'weather')
             this._fitPanel();
+    }
+
+    _drawWeatherChart(area) {
+        let cr;
+        try {
+            cr = area.get_context();
+            const [width, height] = area.get_surface_size();
+            cr.save();
+            cr.setOperator(0); // Clear the previous metric before painting the new chart.
+            cr.paint();
+            cr.restore();
+
+            const points = this._weatherChartPoints ?? [];
+            if (width < 20 || height < 20 || points.length < 2) {
+                cr.setSourceRGBA(0.72, 0.74, 0.80, 0.60);
+                cr.selectFontFace('Sans', 0, 0);
+                cr.setFontSize(11);
+                cr.moveTo(12, Math.max(18, height / 2));
+                cr.showText('Forecast unavailable');
+                return;
+            }
+
+            const values = points.map(point => point.value);
+            let min = Math.min(...values);
+            let max = Math.max(...values);
+            if (this._weatherMetric === 'precipitation') {
+                min = 0;
+                max = 100;
+            } else if (this._weatherMetric === 'wind') {
+                min = 0;
+                max = Math.max(10, Math.ceil(max / 10) * 10);
+            } else {
+                min = Math.floor(min - 1);
+                max = Math.ceil(max + 1);
+            }
+            if (max <= min)
+                max = min + 1;
+
+            const left = 30;
+            const right = width - 8;
+            const top = 14;
+            const bottom = height - 15;
+            const plotWidth = right - left;
+            const plotHeight = bottom - top;
+            const xAt = i => left + i * plotWidth / (points.length - 1);
+            const yAt = value => bottom - (value - min) * plotHeight / (max - min);
+
+            cr.selectFontFace('Sans', 0, 0);
+            cr.setFontSize(8);
+            for (let i = 0; i <= 3; i++) {
+                const value = max - (max - min) * i / 3;
+                const y = top + plotHeight * i / 3;
+                cr.setSourceRGBA(0.78, 0.80, 0.85, 0.12);
+                cr.setLineWidth(1);
+                cr.moveTo(left, y);
+                cr.lineTo(right, y);
+                cr.stroke();
+                cr.setSourceRGBA(0.72, 0.74, 0.80, 0.72);
+                const unit = this._weatherMetric === 'temperature' ? '°'
+                    : this._weatherMetric === 'precipitation' ? '%' : '';
+                cr.moveTo(0, y + 3);
+                cr.showText(`${Math.round(value)}${unit}`);
+            }
+
+            cr.moveTo(xAt(0), bottom);
+            points.forEach((point, i) => cr.lineTo(xAt(i), yAt(point.value)));
+            cr.lineTo(xAt(points.length - 1), bottom);
+            cr.closePath();
+            cr.setSourceRGBA(1.0, 0.75, 0.0, 0.18);
+            cr.fill();
+
+            points.forEach((point, i) => {
+                if (i === 0)
+                    cr.moveTo(xAt(i), yAt(point.value));
+                else
+                    cr.lineTo(xAt(i), yAt(point.value));
+            });
+            cr.setSourceRGBA(1.0, 0.78, 0.02, 0.98);
+            cr.setLineWidth(2.2);
+            cr.stroke();
+
+            cr.setFontSize(8);
+            const annotate = new Set([0, Math.round((points.length - 1) / 4),
+                Math.round((points.length - 1) / 2), Math.round(3 * (points.length - 1) / 4), points.length - 1]);
+            for (const i of annotate) {
+                const x = xAt(i);
+                const y = Math.max(9, yAt(points[i].value) - 7);
+                cr.setSourceRGBA(0.85, 0.86, 0.90, 0.78);
+                cr.moveTo(Math.max(left, Math.min(right - 20, x - 7)), y);
+                cr.showText(`${Math.round(points[i].value)}`);
+            }
+        } catch (e) {
+            LOG('weather chart draw failed', e.message);
+        } finally {
+            cr?.$dispose();
+        }
     }
 
     destroy() {
@@ -3046,7 +4372,11 @@ class Island {
         this._destroyed = true;
         this._removeTimer(this._collapseId);
         this._removeTimer(this._alertTimerId);
+        this._closeWallpaperRequest(this._wallpaperDialog);
+        this._wallpaperDialog = null;
         this._clearTimerTicker();
+        this._stopMarquee();
+        this._stopPixelAnim();
         for (const id of this._timers)
             GLib.source_remove(id);
         this._timers = [];
@@ -3054,6 +4384,10 @@ class Island {
         if (this._monitorId)
             Main.layoutManager.disconnect(this._monitorId);
         this._monitorId = 0;
+        for (const id of this._wallpaperSettingsSignals)
+            this._wallpaperSettings?.disconnect(id);
+        this._wallpaperSettingsSignals = [];
+        this._wallpaperSettings = null;
         if (this._nameSub && this._dbus)
             this._dbus.signal_unsubscribe(this._nameSub);
         this._nameSub = null;
