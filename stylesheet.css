@@ -153,6 +153,11 @@
     spacing: 4px;
 }
 
+.island-battery-indicator-icon {
+    font-size: 13px;
+    text-align: center;
+}
+
 .island-charge-text {
     font-size: 11.5px;
     font-weight: 600;

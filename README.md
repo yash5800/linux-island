@@ -7,9 +7,8 @@
 One black notch at the top centre of your screen. Hover it and it opens into
 a wide, short card — media on the left, calendar on the right — with a slim
 icon dock for alerts, system meters, battery health, a timer, weather,
-clipboard history and settings. Transient events — charging, low battery, a
-Bluetooth device, a notification, a finished timer — slide in as live
-activities and go away on their own.
+clipboard history and settings. Battery cues stay inline in the compact island;
+Bluetooth devices, notifications and finished timers appear as live activities.
 
 No bundler, no daemon, no Electron. It is a single GNOME Shell extension.
 
@@ -26,7 +25,7 @@ No bundler, no daemon, no Electron. It is a single GNOME Shell extension.
 | **Alerts** | Mirrors system notifications, unread badge, click a row to run the notification's own action / raise its app, clear all |
 | **Music** | MPRIS now playing with album art, title/album/artist, elapsed and remaining time, clickable + draggable seek bar, prev/play-pause/next |
 | **System** | Live CPU, memory, disk and network meters with a one-second sampler |
-| **Battery** | Charge and time to full/empty, health %, cycle count, power draw, full and design capacity, voltage, wear, vendor/model/chemistry |
+| **Battery** | Inline 30% low-charge and 80% unplug reminders, mood indicator, health %, cycle count, power draw and capacity details |
 | **Timer** | 1 / 5 / 10 / 25 minute presets, start-pause-reset, finish alert |
 | **Clips** | Clipboard history (30 entries, persisted to disk), copy back, delete, clear all |
 | **Settings** | Module toggles, accent colour, animation speed, pixel-art styles, wallpaper image and blur, auto-close delay |
@@ -34,10 +33,8 @@ No bundler, no daemon, no Electron. It is a single GNOME Shell extension.
 ### Live activities
 
 iPhone-style transient capsules, queued so a new event never overwrites the
-one on screen:
+one on screen. Battery changes use the inline indicator above.
 
-- charging, on battery, fully charged
-- low battery (20%) and critical (10%)
 - Bluetooth device connected, with battery percentage when reported
 - incoming notification
 - timer finished
@@ -49,6 +46,18 @@ Clicking an activity opens the tab it belongs to, or the app that sent it.
 | System | Battery | Clipboard |
 |---|---|---|
 | ![System](docs/system.png) | ![Battery](docs/battery.png) | ![Clips](docs/clips.png) |
+
+## Battery indicators
+
+The compact island keeps a small mood emoji beside the charging percentage.
+It changes with the battery level and pulses at 30%, 50%, 70%, 80% and 90%.
+At 30% while discharging it signals low charge; at 80% while charging it
+reminds you to unplug. The 80% cue is a reminder only and does not stop
+charging automatically.
+
+![Battery indicator in the compact island](docs/battery-inline.png)
+
+![Battery activity, reactions and pixel animation settings](docs/battery-settings.png)
 
 ## Requirements
 
@@ -122,7 +131,8 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 | Battery | Battery line in the panel header |
 | Battery tab | Show/hide the Battery tab |
 | Now playing | Track line in the expanded bar and Music tab |
-| Battery activity | Charging / low-battery live activities |
+| Battery activity | Inline charging, 30% low-charge and 80% unplug indicators |
+| Battery reactions | Pulse the indicator at 30%, 50%, 70%, 80% and 90% |
 | Device activity | Bluetooth connect activities |
 | Clipboard history | Keep copied text on disk (off until you turn it on) |
 | Wallpaper background | Optional custom or desktop wallpaper inside the island (off by default) |
@@ -131,6 +141,7 @@ Stored at `$XDG_CONFIG_HOME/island-gnome/settings.json` (usually
 | Accent | Blue, violet, green, amber |
 | Animation | Slow, normal, fast (scales every duration) |
 | Pixel art | Spark, anime, car or cyberpunk sprites |
+| Pixel animation | Show or hide the animated pixel art |
 | Auto-close | 0.8 s, 0.4 s or off |
 
 ## Where the data comes from
