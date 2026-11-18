@@ -100,6 +100,8 @@ const DEFAULT_SETTINGS = {
     liveBattery: true,
     liveDevices: true,
     batteryTab: true,
+    pixelAnimation: true,
+    batteryReactions: true,
     // Opt-in. Reading the clipboard is a privacy-sensitive act, so a fresh
     // install never does it until the user turns history on (Clips tab or
     // Settings). An existing settings.json keeps whatever it already has.
@@ -302,6 +304,7 @@ class Island {
         this._alertTarget = null;
         this._activities = [];
         this._battPrev = null;
+        this._battMilestones = new Set();
         this._btDevices = new Map();
         this._btSeen = new Set();
         this._timerMinutes = 25;
@@ -836,6 +839,22 @@ class Island {
         }
         this._eq.hide();
 
+        this._batteryIndicator = new St.Bin({
+            style_class: 'island-battery-indicator',
+            width: 20,
+            height: 20,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._batteryIndicatorIcon = new St.Label({
+            text: '',
+            style_class: 'island-battery-indicator-icon',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._batteryIndicator.set_child(this._batteryIndicatorIcon);
+        this._batteryIndicator.hide();
+
         row.add_child(this._pixel);
         row.add_child(this._dot);
         row.add_child(this._compactArt);
@@ -844,6 +863,7 @@ class Island {
         row.add_child(this._clockCompact);
         row.add_child(new St.Widget({x_expand: true}));
         row.add_child(this._eq);
+        row.add_child(this._batteryIndicator);
         row.add_child(this._chargeChip);
         row.add_child(this._tempCompact);
         row.add_child(this._badge);
@@ -1383,9 +1403,11 @@ class Island {
         addToggle('wallpaperBackground', 'Wallpaper background', 'Show a desktop or custom wallpaper');
         addToggle('batteryTab', 'Battery tab', 'Health and cycles');
         addToggle('showMusic', 'Now playing', 'Track in the capsule');
-        addToggle('liveBattery', 'Battery activity', 'Charge alerts');
+        addToggle('liveBattery', 'Battery activity', '30% low · 80% unplug indicators');
         addToggle('liveDevices', 'Device activity', 'Bluetooth alerts');
         addToggle('saveClips', 'Clipboard history', 'Saved on disk');
+        addToggle('batteryReactions', 'Battery reactions', 'Pulse at 30%, 50%, 70%, 80% and 90%');
+        addToggle('pixelAnimation', 'Pixel animation', 'Show and animate the pixel art');
 
         // accent
         const accentRow = new St.BoxLayout({style_class: 'island-setting'});
@@ -1695,6 +1717,8 @@ class Island {
         try {
             const msg = Soup.Message.new('GET', url);
             this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+                if (this._destroyed)
+                    return;
                 try {
                     const bytes = session.send_and_read_finish(res);
                     const file = Gio.File.new_for_path(path);
@@ -1870,6 +1894,11 @@ class Island {
     }
 
     _startPixelAnim() {
+        if (!this._settings.pixelAnimation) {
+            this._pixel?.hide();
+            return;
+        }
+        this._pixel?.show();
         if (this._pixelTimer)
             return;
         this._pixelTimer = this._addTimer(440, () => {
@@ -2743,6 +2772,12 @@ class Island {
         this._capsule.add_style_class_name(`accent-${this._settings.accent}`);
 
         this._tickClock();
+        if (this._settings.pixelAnimation) {
+            this._startPixelAnim();
+        } else {
+            this._stopPixelAnim();
+            this._pixel?.hide();
+        }
         this._refreshWallpaper();
         this._refreshCompactBits();
         this._refreshSystem();
@@ -2824,13 +2859,19 @@ class Island {
         this._refreshCalendar();
     }
 
-    // Compact slot: timer wins, then charging, then weather. The battery chip
-    // is useful here only while charging; battery activity alerts have their
-    // own setting and stay independent of this display.
+    // Compact slot: timer wins, then charging, then weather. Battery status
+    // stays visible here without opening the alert view.
     _refreshCompactBits() {
         const batt = this._battery();
 
         const charging = !!batt && this._settings.showBattery && batt.charging;
+        const showBatteryIndicator = !!batt && this._settings.showBattery;
+        if (this._batteryIndicator)
+            this._batteryIndicator.visible = showBatteryIndicator;
+        if (showBatteryIndicator) {
+            const mood = this._batteryIndicatorMood(batt.percent);
+            this._setBatteryIndicator(mood.icon, mood.kind);
+        }
         if (this._chargeChip) {
             const show = charging;
             this._chargeChip.visible = show;
@@ -2900,7 +2941,7 @@ class Island {
 
     // ---------- live activities ----------
 
-    // One shared transient capsule for battery, device and timer events.
+    // One shared transient capsule for device and timer events.
     // A second event queues instead of clobbering the one on screen, and a
     // click opens the tab that belongs to it (like tapping the island).
     _liveActivity(activity) {
@@ -2960,6 +3001,43 @@ class Island {
 
     // ---------- battery activity ----------
 
+    _batteryIndicatorMood(percent) {
+        if (percent <= 30)
+            return {icon: '😢', kind: 'low'};
+        if (percent < 50)
+            return {icon: '😐', kind: 'mid'};
+        if (percent < 70)
+            return {icon: '🙂', kind: 'milestone'};
+        if (percent < 80)
+            return {icon: '😌', kind: 'milestone'};
+        if (percent < 90)
+            return {icon: '🔌', kind: 'limit'};
+        return {icon: '😵', kind: 'high'};
+    }
+
+    _setBatteryIndicator(icon, mood) {
+        if (!this._batteryIndicator)
+            return;
+        for (const kind of ['charging', 'low', 'mid', 'limit', 'high', 'milestone'])
+            this._batteryIndicator.remove_style_class_name(`island-battery-indicator-${kind}`);
+        this._batteryIndicator.add_style_class_name(`island-battery-indicator-${mood}`);
+        this._batteryIndicatorIcon.text = icon;
+    }
+
+    _showBatteryIndicator(icon, mood = 'milestone') {
+        if (!this._batteryIndicator?.visible || !this._settings.batteryReactions)
+            return;
+        this._setBatteryIndicator(icon, mood);
+
+        // Pulse the marker in place; its capsule stays compact and steady.
+        this._batteryIndicatorIcon.opacity = 100;
+        this._batteryIndicatorIcon.ease({
+            opacity: 255,
+            duration: this._dur(340),
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+        });
+    }
+
     _checkBatteryActivity() {
         const batt = this._battery();
         if (!batt)
@@ -2968,50 +3046,63 @@ class Island {
         const charging = batt.charging;
         const prev = this._battPrev;
         this._battPrev = {percent: batt.percent, charging, raw};
-        if (!prev)
-            return; // first sample is the baseline, not an event
-
         if (!this._settings.liveBattery)
             return;
 
-        if (charging && !prev.charging) {
-            this._liveActivity({
-                title: 'Charging',
-                body: `${batt.percent}% · power connected`,
-                iconName: 'battery-charging-symbolic',
-                duration: 4200,
-                target: 'system',
-            });
-        } else if (!charging && prev.charging && raw === 'Discharging') {
-            this._liveActivity({
-                title: 'On battery',
-                body: `${batt.percent}% left`,
-                iconName: 'battery-good-symbolic',
-                duration: 3600,
-                target: 'system',
-            });
-        } else if (raw === 'Full' && prev.raw === 'Charging') {
-            this._liveActivity({
-                title: 'Fully charged',
-                body: '100% · you can unplug',
-                iconName: 'battery-full-charged-symbolic',
-                duration: 4200,
-                target: 'system',
-            });
+        if (!prev) {
+            // Show an inline marker if startup finds a level that needs action.
+            if (charging && batt.percent >= 80)
+                this._showBatteryIndicator('🔌', 'limit');
+            else if (!charging && batt.percent <= 10)
+                this._showBatteryIndicator('😭', 'low');
+            else if (!charging && batt.percent <= 30)
+                this._showBatteryIndicator('😢', 'low');
+            return;
         }
 
-        // Low battery, announced once when the charge crosses each limit.
-        for (const [limit, title] of [[20, 'Low battery'], [10, 'Battery critically low']]) {
-            if (!charging && prev.percent > limit && batt.percent <= limit) {
-                this._liveActivity({
-                    title,
-                    body: `${batt.percent}% remaining · plug in soon`,
-                    iconName: 'battery-caution-symbolic',
-                    duration: 6500,
-                    target: 'system',
-                });
-            }
+        if (prev.charging !== charging)
+            this._battMilestones.clear();
+
+        if (charging && !prev.charging) {
+            this._showBatteryIndicator('⚡', 'charging');
+        } else if (!charging && prev.charging && raw === 'Discharging') {
+            this._showBatteryIndicator('↘', 'milestone');
+        } else if (raw === 'Full' && prev.raw === 'Charging') {
+            this._showBatteryIndicator('✓', 'high');
         }
+
+        const crossed = (limit) => charging
+            ? prev.percent < limit && batt.percent >= limit
+            : prev.percent > limit && batt.percent <= limit;
+        for (const limit of [30, 50, 70, 80, 90]) {
+            if (!crossed(limit))
+                continue;
+            const mark = `${charging ? 'charging' : 'discharging'}:${limit}`;
+            if (this._battMilestones.has(mark))
+                continue;
+            this._battMilestones.add(mark);
+
+            // The requested low-battery and unplug states get their own
+            // inline markers; they never open the alert capsule.
+            if (!charging && limit === 30) {
+                if (batt.percent > 10)
+                    this._showBatteryIndicator('😢', 'low');
+                continue;
+            }
+            if (charging && limit === 80) {
+                this._showBatteryIndicator('🔌', 'limit');
+                continue;
+            }
+            if (!this._settings.batteryReactions)
+                continue;
+
+            const mood = this._batteryIndicatorMood(batt.percent);
+            this._showBatteryIndicator(mood.icon, mood.kind);
+        }
+
+        // Keep the critical marker more urgent than the 30% warning.
+        if (!charging && prev.percent > 10 && batt.percent <= 10)
+            this._showBatteryIndicator('😭', 'low');
     }
 
     // ---------- bluetooth activity ----------
@@ -4053,16 +4144,20 @@ class Island {
         try {
             const msg = Soup.Message.new('GET', url);
             this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+                if (this._destroyed)
+                    return;
                 try {
                     const bytes = session.send_and_read_finish(res);
                     const text = new TextDecoder('utf-8').decode(bytes.get_data());
                     cb(JSON.parse(text));
                 } catch (e) {
-                    cb(null);
+                    if (!this._destroyed)
+                        cb(null);
                 }
             });
         } catch (e) {
-            cb(null);
+            if (!this._destroyed)
+                cb(null);
         }
     }
 
@@ -4375,6 +4470,7 @@ class Island {
         this._closeWallpaperRequest(this._wallpaperDialog);
         this._wallpaperDialog = null;
         this._clearTimerTicker();
+        this._stopEq();
         this._stopMarquee();
         this._stopPixelAnim();
         for (const id of this._timers)
